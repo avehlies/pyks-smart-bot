@@ -26,6 +26,8 @@ class Sent:
     kwargs: dict[str, Any]
     reply_to: int | None = None
     file_bytes: list[bytes] = field(default_factory=list)
+    # The message object returned to the bot, so tests can see reactions it added.
+    message: Any = None
 
     def __post_init__(self) -> None:
         # Like discord.py: read each uploaded file, then close it.
@@ -103,8 +105,19 @@ class FakeChannel:
         return member.guild_permissions
 
     async def send(self, content: str | None = None, **kwargs: Any) -> Any:
-        self.sent.append(Sent(content, kwargs))
-        return None
+        message = FakeMessage(content=content or "", author=FakeUser(id=BOT_USER_ID), channel=self)
+        self.sent.append(Sent(content, kwargs, message=message))
+        return message
+
+    @property
+    def embeds(self) -> list[discord.Embed]:
+        """Every embed sent to this channel, in order."""
+        out: list[discord.Embed] = []
+        for sent in self.sent:
+            out += (
+                [sent.kwargs["embed"]] if "embed" in sent.kwargs else sent.kwargs.get("embeds", [])
+            )
+        return out
 
 
 @dataclass(eq=False)

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Your Kickstarter Sucks (Patreon)</title>
+    <link>https://www.patreon.com/yourkickstartersucks</link>
+    <item>
+      <title>Bonus: Live in Nashville</title>
+      <link>https://www.patreon.com/posts/live-in-nashville-1</link>
+      <pubDate>Fri, 16 Oct 2026 10:00:00 -0000</pubDate>
+      <description>Also public.</description>
+      <enclosure url="https://c10.patreonusercontent.com/live.mp3" type="audio/mpeg" length="1"/>
+    </item>
+    <item>
+      <title>Patreon Exclusive: Mailbag 88</title>
+      <link>https://www.patreon.com/posts/mailbag-88-2</link>
+      <pubDate>Wed, 14 Oct 2026 10:00:00 -0000</pubDate>
+      <description>Letters!</description>
+      <enclosure url="https://c10.patreonusercontent.com/mb88.mp3" type="audio/mpeg" length="1"/>
+    </item>
+    <item>
+      <title>Patreon Exclusive: Halloween Special</title>
+      <link>https://www.patreon.com/posts/halloween-3</link>
+      <pubDate>Mon, 25 Oct 2021 18:00:00 -0000</pubDate>
+      <description>Spooky.</description>
+      <enclosure url="https://c10.patreonusercontent.com/halloween.mp3" type="audio/mpeg" length="1"/>
+    </item>
+    <item>
+      <title>Patreon Exclusive: Late Night</title>
+      <link>https://www.patreon.com/posts/late-night-4</link>
+      <pubDate>Tue, 25 Oct 2022 03:30:00 -0000</pubDate>
+      <description>Released 10:30pm Central on Oct 24.</description>
+      <enclosure url="https://c10.patreonusercontent.com/late.mp3" type="audio/mpeg" length="1"/>
+    </item>
+    <item>
+      <title>Episode 101: The Best One</title>
+      <link>https://www.patreon.com/posts/ep-101-5</link>
+      <pubDate>Fri, 25 Oct 2019 15:00:00 -0000</pubDate>
+      <description>Cross-posted public episode.</description>
+      <enclosure url="https://c10.patreonusercontent.com/101.mp3" type="audio/mpeg" length="1"/>
+    </item>
+  </channel>
+</rss>

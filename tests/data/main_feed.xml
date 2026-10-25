@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Your Kickstarter Sucks</title>
+    <link>https://art19.com/shows/your-kickstarter-sucks</link>
+    <itunes:image href="https://content.production.cdn.art19.com/images/show.jpeg"/>
+    <item>
+      <title>Episode 412: The Smart Mug For Dogs</title>
+      <link>https://art19.com/shows/your-kickstarter-sucks/episodes/412</link>
+      <guid isPermaLink="false">gid://art19-episode-locator/V0/412</guid>
+      <pubDate>Mon, 19 Oct 2026 10:00:00 -0000</pubDate>
+      <description><![CDATA[<p>Jack &amp; Dave review a mug.</p><p>Plus: a <b>dog</b>.</p>]]></description>
+      <enclosure url="https://rss.art19.com/episodes/412.mp3" type="audio/mpeg" length="51234567"/>
+      <itunes:duration>01:12:34</itunes:duration>
+      <itunes:image href="https://content.production.cdn.art19.com/images/412.jpeg"/>
+    </item>
+    <item>
+      <title>Bonus: Live in Nashville</title>
+      <link>https://art19.com/shows/your-kickstarter-sucks/episodes/live</link>
+      <guid isPermaLink="false">gid://art19-episode-locator/V0/live</guid>
+      <pubDate>Fri, 16 Oct 2026 10:00:00 -0000</pubDate>
+      <description>A live show.</description>
+      <enclosure url="https://rss.art19.com/episodes/live.mp3" type="audio/mpeg" length="1"/>
+      <itunes:duration>3600</itunes:duration>
+    </item>
+    <item>
+      <title>Ep 410: The Jetpack</title>
+      <link>https://art19.com/shows/your-kickstarter-sucks/episodes/410</link>
+      <guid isPermaLink="false">gid://art19-episode-locator/V0/410</guid>
+      <pubDate>Mon, 05 Oct 2026 10:00:00 -0000</pubDate>
+      <description>Up, up and away.</description>
+      <enclosure url="https://rss.art19.com/episodes/410.mp3" type="audio/mpeg" length="1"/>
+      <itunes:duration>58:01</itunes:duration>
+    </item>
+    <item>
+      <title>Episode 101: The Best One</title>
+      <link>https://art19.com/shows/your-kickstarter-sucks/episodes/101</link>
+      <guid isPermaLink="false">gid://art19-episode-locator/V0/101</guid>
+      <pubDate>Fri, 25 Oct 2019 15:00:00 -0000</pubDate>
+      <description><![CDATA[<p>Widely agreed to be the best.</p>]]></description>
+      <enclosure url="https://rss.art19.com/episodes/101.mp3" type="audio/mpeg" length="1"/>
+      <itunes:duration>01:00:00</itunes:duration>
+      <itunes:image href="https://content.production.cdn.art19.com/images/101.jpeg"/>
+    </item>
+    <item>
+      <title>Episode 1: Pilot</title>
+      <link>https://art19.com/shows/your-kickstarter-sucks/episodes/1</link>
+      <guid isPermaLink="false">gid://art19-episode-locator/V0/1</guid>
+      <pubDate>Tue, 07 Feb 2017 10:00:00 -0000</pubDate>
+      <description>The beginning.</description>
+      <enclosure url="https://rss.art19.com/episodes/1.mp3" type="audio/mpeg" length="1"/>
+      <itunes:duration>40:00</itunes:duration>
+    </item>
+  </channel>
+</rss>
