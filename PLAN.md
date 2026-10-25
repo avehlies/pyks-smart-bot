@@ -9,8 +9,8 @@ Port of [`avehlies/yks-smart-bot`](https://github.com/avehlies/yks-smart-bot) (T
 | Discord library | **discord.py ≥ 2.7** (`discord.py[voice]` + `davey`). 2.7 adds DAVE (E2EE voice), which Discord has required since March 2026. |
 | Commands | Keep the `!` prefix commands with the same aliases. Mentioning the bot also works as a prefix and names are case-insensitive. (Akairo's `aliasReplacement` only expanded aliases that contain hyphens; none do, so it isn't ported.) Regex easter eggs stay as message listeners. `/findtheclimp` stays the only slash command. |
 | Database | **Postgres** with SQLAlchemy 2 (async) + asyncpg, and **Alembic** for migrations. Real tables replace Akairo's JSON-string blobs. A one-time import script brings over the Mongo data. |
-| Clip pipeline | A **separate `clip-worker` process** (its own container) downloads, transcribes and indexes clips. The bot only records that a clip exists. They coordinate through Postgres: a job-status column, `FOR UPDATE SKIP LOCKED`, and `LISTEN/NOTIFY` for instant pickup. |
-| Transcription | `faster-whisper` (`tiny.en` by default, configurable) + ffmpeg. Replaces `@xenova/transformers`. |
+| Clip pipeline | A **separate `clip-worker` application** (its own package, image and container) downloads, transcribes and indexes clips. The bot records clips, backfills history and serves `!clip` / `/findtheclimp`, but contains nothing related to transcription. They coordinate through Postgres: a job-status column, `FOR UPDATE SKIP LOCKED`, and `LISTEN/NOTIFY` for instant pickup. |
+| Transcription | `faster-whisper` (`tiny.en` by default, configurable), in the separate clip-worker application. Replaces `@xenova/transformers`. |
 | Search | Postgres full-text search: a generated `tsvector` column + GIN index, queried with `websearch_to_tsquery` + `ts_rank`. |
 | HTTP | `aiohttp` web server inside the bot process (it needs the gateway client to post). Only `/api/share-clip` is ported. |
 | Dropped (backlog) | `!kickstarter`, `!realorfake`, `!cassie` (already commented out), `!episode` (its OpenAI curie fine-tune was retired), the React/static site, the `sessions` collection. |
@@ -20,12 +20,13 @@ Port of [`avehlies/yks-smart-bot`](https://github.com/avehlies/yks-smart-bot) (T
 
 ```
 pyks-smart-bot/
-  pyproject.toml            # one package, two entry points: yks-bot, yks-clip-worker
+  pyproject.toml            # the bot package + uv workspace root
   docker-compose.yml        # postgres, bot, clip-worker
-  Dockerfile                # shared base; worker installs the [worker] extra
+  Dockerfile                # the bot image
   alembic.ini
   migrations/
   assets/                   # images copied from the TS repo (only the ones still used)
+  clip-worker/              # transcription sidecar: own pyproject, Dockerfile, tests
   src/yks/
     config.py               # pydantic-settings, reads .env
     log.py
@@ -36,9 +37,6 @@ pyks-smart-bot/
       checks.py             # per-user cooldowns + per-guild "global rate" gate
       web.py                # /api/share-clip
       cogs/                 # one module per feature (below)
-    clipworker/
-      __main__.py           # run loop + `backfill` subcommand
-      queue.py  discord_rest.py  media.py  transcribe.py
   scripts/migrate_from_mongo.py
   tests/
 ```
@@ -94,25 +92,29 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - History backfill lives in the bot (recording clips is a bot job): `GATHER_ALL_CLIPS=true` on startup, as before, or the owner-only `!backfillclips`.
 - `POST /api/share-clip` (Basic auth with `BOT_AUTH_USERNAME`/`BOT_AUTH_PASSWORD`; JSON `userId`, `page`, `url`) posts to the clip channel and returns a proper status. `GET /healthz` is used by the Docker healthcheck.
 
-### Phase 6 — Clip worker sidecar
-- A loop that waits on `LISTEN clips_new` (with a polling fallback), claims one job at a time with `SKIP LOCKED`, and puts stuck `processing` jobs back after a timeout.
-- **Refreshes the attachment URL through the Discord REST API before downloading.** Discord CDN links are signed and expire, and the TS bot stored them for later downloads, so old backfills could fail.
-- Pipeline: download (httpx, streamed to a temp dir) → ffmpeg to 16 kHz mono WAV → faster-whisper → save the transcript. `failed` after N attempts, with the error recorded.
-- A separate image with the `[worker]` extra, so the bot image stays small. Controlled by `TRANSCRIBE_CLIPS` and `WHISPER_MODEL`.
+### Phase 6 — Clip worker sidecar ✅
+- A **separate application** in `clip-worker/` (package `yks_clip_worker`, a uv workspace member). It has its own Dockerfile, its own compose service, and its own dependencies (asyncpg, httpx, faster-whisper). It imports no bot code and talks to the `clips` table with SQL; the bot has no transcription code or settings at all.
+- A loop that waits on `LISTEN clips_new` (with a polling fallback), claims the newest pending clip with `SKIP LOCKED`, and puts stuck `processing` jobs back after a timeout (or right away on SIGTERM).
+- **Refreshes the attachment URL through the Discord REST API before downloading**, since stored CDN links expire. Deleted messages are marked `skipped`.
+- Pipeline: download (httpx, streamed to a temp dir, size-capped) → faster-whisper (decodes audio and video via PyAV; VAD filter; `tiny.en` by default) → save the transcript. Retries back off (new `retry_at` column) and end in `failed` with `last_error`.
+- CI builds both images and checks that each contains only its own application.
 
-### Phase 7 — `/findtheclimp`
-- Autocomplete: at least 3 characters → ranked full-text search, duplicate transcripts removed, top 20, a 94-character snippet centred on the match; the choice value is the clip ID.
-- Ephemeral preview with **Post it** / **Don't post it** buttons (`discord.ui.View`); posting sends the clip to the clip channel with a "Requested by … for "…"" embed.
-- Sync slash commands on demand (owner `!sync`), instead of deleting and re-registering every command on each start as the TS bot does.
+### Phase 7 — `/findtheclimp` ✅
+- Autocomplete: at least 3 characters → ranked Postgres full-text search over transcribed, non-deleted clips (falling back to a substring match when the phrase is all stop words), duplicate transcripts removed, top 20, a 94-character snippet centred on the match. The choice value is the clip ID.
+- A private (ephemeral) preview with **Post it** / **Don't post it** buttons (`discord.ui.View`, only the requester can press them). Posting sends the clip to the clip channel with a "Requested by … using the `/findtheclimp` command for "…"" embed.
+- Slash commands are registered on demand with the owner-only `!sync` (global) or `!sync here` (this server, instantly), instead of deleting and re-registering every command on each start as the TS bot did.
 
-### Phase 8 — Listen together
-- `!listen [play [n] | random | pause | stop]`: join the member's voice channel, download the episode to a temp file, play it with `FFmpegPCMAudio`.
-- A wrapper `AudioSource` counts 20 ms frames to track the playback position (discord.py doesn't expose one); a "Now playing" embed whose progress bar updates every 10 s.
-- ⏸ ⏹ ▶️ reaction controls; stop asks ✅/❌ with a 10 s timeout; temp files and the voice connection are cleaned up on finish or error.
+### Phase 8 — Listen together ✅
+- `!listen [play [n] | random | pause | stop]`: joins the member's voice channel, downloads the episode to a temp file (so pausing can't drop a stream), and plays it with `FFmpegOpusAudio` (ffmpeg does the Opus encoding; discord.py ≥ 2.7 + `davey` handle DAVE encryption).
+- One session per server (the TS bot had a single global player). A wrapper `AudioSource` counts 20 ms frames to track the playback position, and a "Now playing" embed's progress bar updates every 10 s.
+- ⏸ ⏹ ▶️ reaction controls on the Now playing message; stop asks ✅/❌ with a 10 s timeout, and only the person who reacted can answer. Status updates ("Paused at …", "Resuming.", "Finished playing episode.") go into one reply that's edited in place. Temp files and the voice connection are cleaned up on finish, error or failed download.
+- `!listen url <link>` (play any audio URL) is owner-only.
 
-### Phase 9 — Data migration and cutover
-- `scripts/migrate_from_mongo.py`: read the Akairo `models` docs and the `clips` collection, parse the JSON-string values, write to Postgres idempotently. Existing transcriptions are kept, so nothing needs re-transcribing.
-- Cutover checklist: stop the TS bot → run the migration → start the compose stack → spot-check each command.
+### Phase 9 — Data migration and cutover ✅
+- `yks-import-mongo` (`src/yks/tools/mongo_import.py`, optional `migrate` extra for pymongo) reads the Akairo `models` docs and the `clips` collection. It decodes the JSON-string values (the `rssChannel` channel dump, the `bestEpByUser` map entries, the tally JSON strings) and upserts idempotently. `--dry-run` shows counts and warnings first.
+- Clips: the channel, attachment ID and filename come from the stored URL. Existing transcripts are kept, so nothing is re-transcribed. Empty transcripts (the TS bot's failure marker) are queued again unless `--keep-empty-transcripts` is passed. Rows the new bot already recorded get the old transcript without overwriting newer worker output.
+- Tallies get their channel from the configured IDs, and a timestamp from `ts` or, failing that, the message's snowflake.
+- The cutover checklist and rollback are in the README ("Moving over from the TypeScript bot").
 
 ### Backlog
 - Revive `!kickstarter` / `!realorfake` / `!episode` on a current LLM API (and product images).
@@ -122,13 +124,17 @@ Each phase ends with something runnable that can be tested on a test guild befor
 ## Fixes made during the port (rather than copied as-is)
 
 - `!today` drops every bonus episode (its "not in main feed" filter is inverted).
-- `!listen random` picks an array index, not an episode number, and its skip-101 logic is off by one.
+- `!listen random` picked an array index, not an episode, and its skip-101 logic was off by one; it now picks a random numbered episode.
+- `!listen url` let anyone make the bot download and play any URL; it's now owner-only.
+- The "Now playing" embed crashed on titles like "Ep 410: …" (it only understood "Episode N"); both forms work now.
 - The April 7 "no cooldown" exemption for `!mug`/`!burgy` is calculated only once at process start.
 - The kickstarter reaction listener crashes on messages without embeds.
 - Each clip message keeps only its last attachment in the DB.
 - `!clip` fetched the clip's message from whatever channel the command was used in, so it only worked inside the clip channel; it now always reads from the clip channel. It re-uploads only files the bot is allowed to upload and links bigger ones, and stops after 10 picks instead of making up to 100 blind fetches.
 - `/api/share-clip` never answered the HTTP request (callers hung until timeout); it now returns 200/400/401/502/503 JSON. Credentials are compared in constant time, and `userId` must be numeric (it's put into a mention).
-- Every slash command is deleted and re-registered on each startup.
+- Every slash command is deleted and re-registered on each startup. Commands are now synced on demand with `!sync`.
+- `/findtheclimp` fetched the clip's message from the channel the command was used in, so a clip could only be previewed and posted from inside the clip channel.
+- `/findtheclimp` found nothing for phrases made only of stop words; it now falls back to a substring match.
 - `!help` still lists the disabled kickstarter commands.
 - The `hello` trigger used up its 1-hour cooldown on *any* message containing "hi"/"sup"/etc. (even "this"), so a later real greeting was ignored. Now the cooldown only counts when the bot is mentioned.
 - `!emma` sometimes sent nothing when one of its five emojis was missing; it now picks from the ones that exist.
@@ -149,4 +155,4 @@ Each phase ends with something runnable that can be tested on a test guild befor
 
 ## Environment variables
 
-`AUTH_TOKEN`, `DATABASE_URL`, `YKS_GUILD_ID`, `YKS_CLIP_CHANNEL_ID`, `YKS_MAILBAG_CHANNEL_ID`, `YKS_KICKSTARTER_BOT_CHANNEL_ID`, `MAIN_FEED_RSS`, `BONUS_FEED_RSS`, `BOT_AUTH_USERNAME`, `BOT_AUTH_PASSWORD`, `PORT` (default 3000), `TRANSCRIBE_CLIPS`, `WHISPER_MODEL` (default `tiny.en`), `MONGO_URL` (migration script only).
+`AUTH_TOKEN`, `DATABASE_URL`, `YKS_GUILD_ID`, `YKS_CLIP_CHANNEL_ID`, `YKS_MAILBAG_CHANNEL_ID`, `YKS_KICKSTARTER_BOT_CHANNEL_ID`, `MAIN_FEED_RSS`, `BONUS_FEED_RSS`, `BOT_AUTH_USERNAME`, `BOT_AUTH_PASSWORD`, `PORT` (default 3000), `GATHER_ALL_CLIPS`, `BOT_TIMEZONE`, `MONGO_URL` (migration script only). Clip worker: `WHISPER_MODEL` (default `tiny.en`), `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `MAX_ATTEMPTS` (see `clip-worker/README.md`).

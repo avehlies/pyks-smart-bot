@@ -27,8 +27,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked
+      - name: Install dependencies (bot and clip worker)
+        run: uv sync --locked --all-packages
       - name: Ruff lint
         run: uv run ruff check --output-format=github .
       - name: Ruff format
@@ -60,8 +60,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      - name: Install dependencies
-        run: uv sync --locked
+      - name: Install dependencies (bot and clip worker)
+        run: uv sync --locked --all-packages
       - name: Apply migrations
         run: uv run alembic upgrade head
       - name: Check models match migrations
@@ -71,15 +71,30 @@ jobs:
         run: uv run pytest -ra
 
   docker:
-    name: Docker build
+    name: Docker build (${{ matrix.image }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: bot
+            dockerfile: Dockerfile
+            check: python -c "import yks.bot.client; import importlib.util as u; assert u.find_spec('yks_clip_worker') is None and u.find_spec('faster_whisper') is None"
+          - image: clip-worker
+            dockerfile: clip-worker/Dockerfile
+            check: python -c "import yks_clip_worker.worker, faster_whisper; import importlib.util as u; assert u.find_spec('discord') is None and u.find_spec('yks') is None"
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      - name: Build bot image
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          load: true
+          tags: yks-${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Check the image contains only its own application
+        run: docker run --rm yks-${{ matrix.image }}:ci ${{ matrix.check }}
