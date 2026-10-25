@@ -104,10 +104,11 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - A private (ephemeral) preview with **Post it** / **Don't post it** buttons (`discord.ui.View`, only the requester can press them). Posting sends the clip to the clip channel with a "Requested by … using the `/findtheclimp` command for "…"" embed.
 - Slash commands are registered on demand with the owner-only `!sync` (global) or `!sync here` (this server, instantly), instead of deleting and re-registering every command on each start as the TS bot did.
 
-### Phase 8 — Listen together
-- `!listen [play [n] | random | pause | stop]`: join the member's voice channel, download the episode to a temp file, play it with `FFmpegPCMAudio`.
-- A wrapper `AudioSource` counts 20 ms frames to track the playback position (discord.py doesn't expose one); a "Now playing" embed whose progress bar updates every 10 s.
-- ⏸ ⏹ ▶️ reaction controls; stop asks ✅/❌ with a 10 s timeout; temp files and the voice connection are cleaned up on finish or error.
+### Phase 8 — Listen together ✅
+- `!listen [play [n] | random | pause | stop]`: joins the member's voice channel, downloads the episode to a temp file (so pausing can't drop a stream), and plays it with `FFmpegOpusAudio` (ffmpeg does the Opus encoding; discord.py ≥ 2.7 + `davey` handle DAVE encryption).
+- One session per server (the TS bot had a single global player). A wrapper `AudioSource` counts 20 ms frames to track the playback position, and a "Now playing" embed's progress bar updates every 10 s.
+- ⏸ ⏹ ▶️ reaction controls on the Now playing message; stop asks ✅/❌ with a 10 s timeout, and only the person who reacted can answer. Status updates ("Paused at …", "Resuming.", "Finished playing episode.") go into one reply that's edited in place. Temp files and the voice connection are cleaned up on finish, error or failed download.
+- `!listen url <link>` (play any audio URL) is owner-only.
 
 ### Phase 9 — Data migration and cutover
 - `scripts/migrate_from_mongo.py`: read the Akairo `models` docs and the `clips` collection, parse the JSON-string values, write to Postgres idempotently. Existing transcriptions are kept, so nothing needs re-transcribing.
@@ -121,7 +122,9 @@ Each phase ends with something runnable that can be tested on a test guild befor
 ## Fixes made during the port (rather than copied as-is)
 
 - `!today` drops every bonus episode (its "not in main feed" filter is inverted).
-- `!listen random` picks an array index, not an episode number, and its skip-101 logic is off by one.
+- `!listen random` picked an array index, not an episode, and its skip-101 logic was off by one; it now picks a random numbered episode.
+- `!listen url` let anyone make the bot download and play any URL; it's now owner-only.
+- The "Now playing" embed crashed on titles like "Ep 410: …" (it only understood "Episode N"); both forms work now.
 - The April 7 "no cooldown" exemption for `!mug`/`!burgy` is calculated only once at process start.
 - The kickstarter reaction listener crashes on messages without embeds.
 - Each clip message keeps only its last attachment in the DB.

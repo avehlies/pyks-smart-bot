@@ -179,13 +179,28 @@ class FakeMessage:
     _state: Any = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     edited_at: datetime | None = None
+    edits: list[dict[str, Any]] = field(default_factory=list)
+    deleted: bool = False
 
     @property
     def guild(self) -> FakeGuild | None:
         return self.channel.guild
 
     async def reply(self, content: str | None = None, **kwargs: Any) -> Any:
-        self.channel.sent.append(Sent(content, kwargs, reply_to=self.id))
+        message = FakeMessage(
+            content=content or "", author=FakeUser(id=BOT_USER_ID), channel=self.channel
+        )
+        self.channel.sent.append(Sent(content, kwargs, reply_to=self.id, message=message))
+        return message
+
+    async def edit(self, **kwargs: Any) -> FakeMessage:
+        self.edits.append(kwargs)
+        if "content" in kwargs:
+            self.content = kwargs["content"]
+        return self
+
+    async def delete(self) -> None:
+        self.deleted = True
 
     @property
     def jump_url(self) -> str:
@@ -232,3 +247,77 @@ class FakeReaction:
 
 def sent_files(channel: FakeChannel) -> list[discord.File]:
     return [s.kwargs["file"] for s in channel.sent if "file" in s.kwargs]
+
+
+class FakeVoiceClient:
+    """Mimics discord.VoiceClient: stop() ends playback and runs the `after` callback."""
+
+    def __init__(self, channel: FakeVoiceChannel) -> None:
+        self.channel = channel
+        self.source: Any = None
+        self.after: Any = None
+        self.paused = False
+        self.connected = True
+
+    def play(self, source: Any, *, after: Any = None) -> None:
+        self.source, self.after, self.paused = source, after, False
+
+    def is_playing(self) -> bool:
+        return self.source is not None and not self.paused
+
+    def is_paused(self) -> bool:
+        return self.source is not None and self.paused
+
+    def pause(self) -> None:
+        self.paused = True
+
+    def resume(self) -> None:
+        self.paused = False
+
+    def stop(self) -> None:
+        self.finish(None)
+
+    def finish(self, error: Exception | None = None) -> None:
+        """End playback (as if the episode ended, or with an error)."""
+        if self.source is not None:
+            after, self.source = self.after, None
+            if after:
+                after(error)
+
+    async def disconnect(self, *, force: bool = False) -> None:
+        self.connected = False
+
+
+@dataclass(eq=False)
+class FakeVoiceChannel:
+    name: str = "Hangout"
+    id: int = field(default_factory=_next_id)
+    fail: bool = False
+    clients: list[FakeVoiceClient] = field(default_factory=list)
+
+    async def connect(self, **kwargs: Any) -> FakeVoiceClient:
+        if self.fail:
+            raise TimeoutError("voice handshake timed out")
+        client = FakeVoiceClient(self)
+        self.clients.append(client)
+        return client
+
+
+class FakeAudio:
+    """An audio source yielding `frames` 20 ms frames."""
+
+    def __init__(self, frames: int = 1000) -> None:
+        self.remaining = frames
+        self.cleaned_up = False
+
+    def read(self) -> bytes:
+        if self.remaining <= 0:
+            return b""
+        self.remaining -= 1
+        return b"\x00" * 10
+
+    def is_opus(self) -> bool:
+        return True
+
+    def cleanup(self) -> None:
+        self.cleaned_up = True
