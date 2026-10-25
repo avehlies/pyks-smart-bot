@@ -27,6 +27,9 @@ class WorkerSettings(BaseSettings):
     whisper_device: str = "cpu"  # or "cuda"
     whisper_compute_type: str = "int8"  # fast on CPU; "float16" on GPU
     whisper_beam_size: int = 5
+    # Stop the transcription process (freeing the model's memory) after this many seconds with no
+    # clips; the next clip starts it again. 0 keeps the model loaded all the time.
+    whisper_idle_unload_seconds: float = 300.0
 
     max_attempts: int = 3
     # Seconds between queue checks when no NOTIFY arrives (a safety net; NOTIFY wakes it sooner).

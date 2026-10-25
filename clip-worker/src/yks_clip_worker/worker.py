@@ -87,7 +87,7 @@ class Worker:
                 )
                 log.warning("Clip %s: %s (%s)", job.id, exc, status)
                 return
-            text = await asyncio.to_thread(self.transcriber.transcribe, path)
+            text = await self.transcriber.transcribe(path)
         await self.queue.complete(job, text)
         log.info("Clip %s done: %d characters", job.id, len(text))
 
