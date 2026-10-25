@@ -90,8 +90,8 @@ class FakeChannel:
     name: str = "general"
     type: discord.ChannelType | None = None
     sent: list[Sent] = field(default_factory=list)
-    # Messages that fetch_message() can find (add with `post()`).
-    history: dict[int, FakeMessage] = field(default_factory=dict)
+    # Messages that fetch_message() and history() can find (add with `post()`).
+    stored: dict[int, FakeMessage] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.type is None:
@@ -109,12 +109,16 @@ class FakeChannel:
     def post(self, content: str = "", author: FakeUser | None = None, **kwargs: Any) -> FakeMessage:
         """Put a message in this channel's history (as if someone had posted it)."""
         message = FakeMessage(content=content, author=author or FakeUser(), channel=self, **kwargs)
-        self.history[message.id] = message
+        self.stored[message.id] = message
         return message
+
+    async def history(self, limit: int | None = None) -> Any:  # newest first, like discord.py
+        for message in sorted(self.stored.values(), key=lambda m: m.id, reverse=True)[:limit]:
+            yield message
 
     async def fetch_message(self, message_id: int) -> FakeMessage:
         try:
-            return self.history[message_id]
+            return self.stored[message_id]
         except KeyError:
             raise discord.NotFound(_FakeResponse(404), "Unknown Message") from None
 
@@ -141,6 +145,7 @@ class FakeGuild:
     channels: list[FakeChannel] = field(default_factory=list)
     members: list[FakeMember] = field(default_factory=list)
     system_channel: FakeChannel | None = None
+    filesize_limit: int = 10 * 1024 * 1024
 
     def get_channel(self, channel_id: int) -> FakeChannel | None:
         return next((c for c in self.channels if c.id == channel_id), None)
@@ -200,6 +205,22 @@ class FakeMessage:
                 reaction.me = True
                 return
         self.reactions.append(FakeReaction(emoji, 1, me=True))
+
+
+@dataclass(eq=False)
+class FakeAttachment:
+    filename: str = "clip.mp4"
+    content_type: str | None = "video/mp4"
+    size: int = 1024
+    data: bytes = b"fake media"
+    id: int = field(default_factory=_next_id)
+
+    @property
+    def url(self) -> str:
+        return f"https://cdn.discordapp.com/attachments/1/{self.id}/{self.filename}?ex=1&is=2&hm=3"
+
+    async def to_file(self) -> discord.File:
+        return discord.File(io.BytesIO(self.data), filename=self.filename)
 
 
 @dataclass(eq=False)
