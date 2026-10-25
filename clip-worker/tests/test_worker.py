@@ -84,9 +84,12 @@ class FakeTranscriber:
         self.error: Exception | None = None
         self.gate: asyncio.Event | None = None
 
-    def transcribe(self, path: Path) -> str:
-        assert path.read_bytes() == b"\x00fake media bytes"
+    async def transcribe(self, path: Path) -> str:
+        assert path.read_bytes() == b"\x00fake media bytes"  # noqa: ASYNC240 - tiny test file
         self.paths.append(path)
+        if self.gate is not None:  # block until the test lets it finish
+            self.gate.set()
+            await asyncio.sleep(60)
         if self.error:
             raise self.error
         return self.text
@@ -278,19 +281,13 @@ async def test_rate_limits_are_waited_out(
 
 
 async def test_cancel_mid_job_hands_the_clip_back(
-    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord, monkeypatch: pytest.MonkeyPatch
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
 ) -> None:
     clip_id = await insert_clip(pool, 10, 20)
     fake_discord.messages[10] = [20]
-    started = asyncio.Event()
-
-    async def slow_to_thread(func, *args):
-        started.set()
-        await asyncio.sleep(60)
-
-    monkeypatch.setattr(sys.modules["yks_clip_worker.worker"].asyncio, "to_thread", slow_to_thread)
+    transcriber.gate = asyncio.Event()  # transcribe() sets it, then hangs
     task = asyncio.create_task(worker.process_one())
-    await asyncio.wait_for(started.wait(), 5)
+    await asyncio.wait_for(transcriber.gate.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

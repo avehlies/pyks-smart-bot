@@ -13,7 +13,7 @@ import httpx
 from yks_clip_worker.config import WorkerSettings, get_settings
 from yks_clip_worker.discord_api import DiscordAPI
 from yks_clip_worker.queue import ClipQueue
-from yks_clip_worker.transcriber import WhisperTranscriber
+from yks_clip_worker.transcriber import ProcessTranscriber
 from yks_clip_worker.worker import Worker
 
 log = logging.getLogger("yks_clip_worker")
@@ -24,16 +24,18 @@ async def run(settings: WorkerSettings) -> None:
     listen_conn = await asyncpg.connect(settings.database_url)
     discord = DiscordAPI(settings.auth_token)
     http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True)
+    transcriber = ProcessTranscriber.whisper(
+        settings.whisper_model,
+        device=settings.whisper_device,
+        compute_type=settings.whisper_compute_type,
+        beam_size=settings.whisper_beam_size,
+        idle_seconds=settings.whisper_idle_unload_seconds,
+    )
     worker = Worker(
         queue=ClipQueue(pool),
         discord=discord,
         http=http,
-        transcriber=WhisperTranscriber(
-            settings.whisper_model,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-            beam_size=settings.whisper_beam_size,
-        ),
+        transcriber=transcriber,
         settings=settings,
     )
     task = asyncio.create_task(worker.run(listen_conn))
@@ -46,6 +48,7 @@ async def run(settings: WorkerSettings) -> None:
     except asyncio.CancelledError:
         log.info("Shutting down.")
     finally:
+        await transcriber.aclose()
         await http.aclose()
         await discord.aclose()
         await listen_conn.close()
