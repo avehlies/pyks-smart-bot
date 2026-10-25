@@ -21,6 +21,10 @@ dependencies = [
 [project.scripts]
 yks-bot = "yks.bot.__main__:main"
 
+[tool.uv.workspace]
+# The clip transcription worker: a separate application with its own dependencies and image.
+members = ["clip-worker"]
+
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=1.0", "ruff>=0.12"]
 
@@ -42,4 +46,4 @@ select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "SIM", "RUF"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-testpaths = ["tests"]
+testpaths = ["tests", "clip-worker/tests"]

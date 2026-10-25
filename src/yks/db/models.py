@@ -135,9 +135,10 @@ class ClipStatus(enum.StrEnum):
 class Clip(Base):
     """One row per audio/video attachment posted in the clip channel.
 
-    The bot inserts `pending` rows; the clip worker claims them, transcribes, and marks them
-    `done`/`failed`. A trigger (see the initial migration) sends `NOTIFY clips_new, '<id>'` on
-    every insert so the worker picks new clips up immediately.
+    The bot inserts `pending` rows; the separate clip-worker application claims them,
+    transcribes, and marks them `done`/`failed` (it uses this table directly, with SQL).
+    A trigger (see the initial migration) sends `NOTIFY clips_new, '<id>'` on every insert so
+    the worker picks new clips up immediately.
     """
 
     __tablename__ = "clips"
@@ -175,6 +176,8 @@ class Clip(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_error: Mapped[str | None] = mapped_column(Text)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Not before this time (backoff after a failed attempt). NULL = as soon as possible.
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     transcribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     search: Mapped[str | None] = mapped_column(
