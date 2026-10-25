@@ -235,7 +235,7 @@ async def test_new_main_episode_is_announced(
     assert await feeds.check_feeds() == ["main"]
     (sent,) = rss_channel.sent
     assert sent.kwargs["embed"].fields[0].name == "Episode 413: The Self-Folding Sock"
-    assert [e.name for e in sent.message.reactions] == ["1ohno", "2they", "3did", "40another"]
+    assert [r.emoji.name for r in sent.message.reactions] == ["1ohno", "2they", "3did", "40another"]
 
 
 async def test_new_bonus_episode_is_announced_unless_public(
