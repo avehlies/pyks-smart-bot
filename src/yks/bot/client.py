@@ -7,13 +7,20 @@ import discord
 from discord.ext import commands
 
 from yks.bot.checks import DefaultCooldown, GuildGate
+from yks.bot.triggers import TriggerRegistry
 from yks.config import Settings
 from yks.db import Database
 
 log = logging.getLogger(__name__)
 
 # Cogs loaded at startup. Each phase adds its own.
-EXTENSIONS: tuple[str, ...] = ("yks.bot.cogs.core",)
+EXTENSIONS: tuple[str, ...] = (
+    "yks.bot.cogs.core",
+    "yks.bot.cogs.triggers",
+    "yks.bot.cogs.simple",
+    "yks.bot.cogs.fun",
+    "yks.bot.cogs.help",
+)
 
 
 def build_intents() -> discord.Intents:
@@ -36,6 +43,7 @@ class YKSBot(commands.Bot):
         self.settings = settings
         self.db = db
         self.guild_gate = GuildGate()
+        self.triggers = TriggerRegistry()
         self.add_check(DefaultCooldown())
         self.add_check(self._not_blocked)
 
