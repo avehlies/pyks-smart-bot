@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yks.db.models import Clip
+from yks.db.models import Clip, ClipStatus
 
 
 @dataclass(frozen=True)
@@ -60,3 +60,35 @@ async def mark_messages_deleted(session: AsyncSession, message_ids: Iterable[int
         update(Clip).where(Clip.message_id.in_(ids)).values(deleted=True)
     )
     return result.rowcount or 0
+
+
+async def search_clips(session: AsyncSession, phrase: str, *, limit: int = 60) -> list[Clip]:
+    """Transcribed clips matching `phrase`, best match first.
+
+    Uses Postgres full-text search (stemmed, ranked). If that finds nothing, for example when the
+    phrase is all stop words ("it is what it is"), fall back to a case-insensitive substring match.
+    """
+    searchable = (
+        Clip.deleted.is_(False),
+        Clip.status == ClipStatus.DONE,
+        Clip.transcription.is_not(None),
+        Clip.transcription != "",
+    )
+    query = func.websearch_to_tsquery("english", phrase)
+    ranked = (
+        select(Clip)
+        .where(*searchable, Clip.search.op("@@")(query))
+        .order_by(func.ts_rank(Clip.search, query).desc(), Clip.id.desc())
+        .limit(limit)
+    )
+    found = list((await session.scalars(ranked)).all())
+    if found:
+        return found
+    escaped = phrase.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    substring = (
+        select(Clip)
+        .where(*searchable, Clip.transcription.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Clip.id.desc())
+        .limit(limit)
+    )
+    return list((await session.scalars(substring)).all())

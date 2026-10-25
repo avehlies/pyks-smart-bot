@@ -99,10 +99,10 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - Pipeline: download (httpx, streamed to a temp dir, size-capped) → faster-whisper (decodes audio and video via PyAV; VAD filter; `tiny.en` by default) → save the transcript. Retries back off (new `retry_at` column) and end in `failed` with `last_error`.
 - CI builds both images and checks that each contains only its own application.
 
-### Phase 7 — `/findtheclimp`
-- Autocomplete: at least 3 characters → ranked full-text search, duplicate transcripts removed, top 20, a 94-character snippet centred on the match; the choice value is the clip ID.
-- Ephemeral preview with **Post it** / **Don't post it** buttons (`discord.ui.View`); posting sends the clip to the clip channel with a "Requested by … for "…"" embed.
-- Sync slash commands on demand (owner `!sync`), instead of deleting and re-registering every command on each start as the TS bot does.
+### Phase 7 — `/findtheclimp` ✅
+- Autocomplete: at least 3 characters → ranked Postgres full-text search over transcribed, non-deleted clips (falling back to a substring match when the phrase is all stop words), duplicate transcripts removed, top 20, a 94-character snippet centred on the match. The choice value is the clip ID.
+- A private (ephemeral) preview with **Post it** / **Don't post it** buttons (`discord.ui.View`, only the requester can press them). Posting sends the clip to the clip channel with a "Requested by … using the `/findtheclimp` command for "…"" embed.
+- Slash commands are registered on demand with the owner-only `!sync` (global) or `!sync here` (this server, instantly), instead of deleting and re-registering every command on each start as the TS bot did.
 
 ### Phase 8 — Listen together
 - `!listen [play [n] | random | pause | stop]`: join the member's voice channel, download the episode to a temp file, play it with `FFmpegPCMAudio`.
@@ -127,7 +127,9 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - Each clip message keeps only its last attachment in the DB.
 - `!clip` fetched the clip's message from whatever channel the command was used in, so it only worked inside the clip channel; it now always reads from the clip channel. It re-uploads only files the bot is allowed to upload and links bigger ones, and stops after 10 picks instead of making up to 100 blind fetches.
 - `/api/share-clip` never answered the HTTP request (callers hung until timeout); it now returns 200/400/401/502/503 JSON. Credentials are compared in constant time, and `userId` must be numeric (it's put into a mention).
-- Every slash command is deleted and re-registered on each startup.
+- Every slash command is deleted and re-registered on each startup. Commands are now synced on demand with `!sync`.
+- `/findtheclimp` fetched the clip's message from the channel the command was used in, so a clip could only be previewed and posted from inside the clip channel.
+- `/findtheclimp` found nothing for phrases made only of stop words; it now falls back to a substring match.
 - `!help` still lists the disabled kickstarter commands.
 - The `hello` trigger used up its 1-hour cooldown on *any* message containing "hi"/"sup"/etc. (even "this"), so a later real greeting was ignored. Now the cooldown only counts when the bot is mentioned.
 - `!emma` sometimes sent nothing when one of its five emojis was missing; it now picks from the ones that exist.

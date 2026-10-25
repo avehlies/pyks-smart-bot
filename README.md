@@ -11,6 +11,8 @@ docker compose up --build
 
 This starts Postgres, applies migrations (`migrate` service), the bot, and the **clip worker**. The clip worker is a separate application that transcribes clips for `/findtheclimp`; see [clip-worker/README.md](clip-worker/README.md). The first time the worker starts, it downloads its speech model (about 75 MB for `tiny.en`) into the `whisper-models` volume.
 
+After the first deploy (and whenever slash commands change), send `!sync` as the bot owner to register `/findtheclimp`. Global registration can take a while to appear; `!sync here` registers it in the current server instantly.
+
 ## Local development
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
