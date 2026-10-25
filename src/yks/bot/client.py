@@ -10,6 +10,7 @@ from yks.bot.checks import DefaultCooldown, GuildGate
 from yks.bot.triggers import TriggerRegistry
 from yks.config import Settings
 from yks.db import Database
+from yks.feeds import FeedClient, make_http_client
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ EXTENSIONS: tuple[str, ...] = (
     "yks.bot.cogs.fun",
     "yks.bot.cogs.help",
     "yks.bot.cogs.welcome",
+    "yks.bot.cogs.feeds",
 )
 
 
@@ -45,6 +47,8 @@ class YKSBot(commands.Bot):
         self.db = db
         self.guild_gate = GuildGate()
         self.triggers = TriggerRegistry()
+        self.http_client = make_http_client()
+        self.feeds = FeedClient(self.http_client)
         self.add_check(DefaultCooldown())
         self.add_check(self._not_blocked)
 
@@ -55,6 +59,10 @@ class YKSBot(commands.Bot):
         for extension in EXTENSIONS:
             await self.load_extension(extension)
             log.info("Loaded extension %s", extension)
+
+    async def close(self) -> None:
+        await super().close()
+        await self.http_client.aclose()
 
     async def on_ready(self) -> None:
         assert self.user is not None

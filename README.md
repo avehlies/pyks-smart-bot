@@ -62,6 +62,7 @@ Review the generated file in `migrations/versions/` before committing.
 ```
 src/yks/
   config.py             settings from environment / .env
+  feeds.py              podcast RSS fetching, parsing and caching
   db/                   SQLAlchemy models, engine, and queries (guilds.py, ...)
   bot/
     client.py           bot class: prefix, intents, global checks, extension loading
@@ -69,8 +70,9 @@ src/yks/
     triggers.py         regex "easter egg" triggers on ordinary messages
     simple_commands.py  data table of config-driven commands (text/embed/file responses)
     welcome_image.py    the "JF has blessed your timeline" image (Pillow)
+    episodes.py         embeds for !latest, !today and new-episode announcements
     cogs/               one module per feature
 assets/                 images the bot posts, plus the bundled DejaVu Sans font
 migrations/             Alembic migrations
-tests/
+tests/                  data/ holds sample RSS feeds used by the tests
 ```

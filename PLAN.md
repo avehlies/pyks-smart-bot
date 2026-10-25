@@ -77,10 +77,10 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `on_member_join`: each member is welcomed at most once per guild (an atomic insert into `welcomed_members`). The welcome image is built with **Pillow**: avatar clipped to a circle, green multi-line text that shrinks to fit (long lines squeezed to 550 px like canvas `maxWidth`), DejaVu Sans bundled in `assets/fonts/`. It posts to the system channel with one of the nine original greetings.
 - Rendering runs in a worker thread so it doesn't block the bot.
 
-### Phase 3 — Podcast feeds
-- `feeds.py`: `httpx` + `feedparser` with a ~15 s cache (the TS bot re-downloads both feeds on every command).
-- `!latest [main|bonus|premium|patreon|both]`, `!today`, `!best [episode]` (vote, change a vote, top 10, random tie-break, the 101 joke).
-- Background task every 20 s: detect new main/bonus episodes, set the "Listening to …" presence, announce in each guild's RSS channel with the 1ohno/2they/3did/40another/yks reactions.
+### Phase 3 — Podcast feeds ✅
+- `yks/feeds.py`: `httpx` + `feedparser`, parsed into `Feed`/`Episode` objects, with a 15 s cache per URL (concurrent requests share one download). The TS bot re-downloaded both feeds on every command.
+- `!latest [main|bonus|premium|patreon|both]` (aliases `!eps`, `!recent`), `!today`, `!best [episode]` (vote, change a vote, top 10 with random tie-breaks, the Episode 101 joke).
+- A watcher every 20 s: detects new main/bonus episodes, sets the "Listening to …" presence, and announces in each guild's RSS channel with the 1ohno/2they/3did/40another/yks reactions. Public episodes cross-posted to Patreon are announced once.
 
 ### Phase 4 — Reaction tallies
 - `on_raw_reaction_add/remove` (the raw events handle uncached messages, replacing partials): `:this:` reactions in the mailbag channel, and on the bot's own embeds in the kickstarter channel.
@@ -133,6 +133,13 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `!staysippin` uploaded some JPEGs under `.png` names; files now keep their real names.
 - `!rssChannel` stored a JSON dump of the whole channel object; it now stores the channel ID.
 - Guilds without a system channel made the welcome listener fail; it now skips them, with a log line.
+- `!today`'s bonus filter was inverted, so bonus episodes never appeared. It also sent every match in one message, which Discord rejects past 10 embeds or 6,000 characters; results are now split across messages. Bonus episodes link as "Patreon" and main ones as "Listen" (the TS bot labelled every link "Patreon").
+- `!today` compares dates in `BOT_TIMEZONE` (the TS bot used the server's clock, UTC in Docker), so a late-evening release counts for the right day.
+- A feed outage crashed `!latest`, `!today`, `!best` and the watcher; they now reply with "Couldn't reach the podcast feed right now", or skip that poll.
+- The "Listening to …" presence was only set when a new bonus episode appeared, so it vanished after every restart; it's now set on the first poll.
+- On a fresh database the watcher announced the current episodes as new on first start; it now just records them. (After the Phase 9 data import, the old "last seen" titles carry over anyway.)
+- `!best` read the newest episode number from the first feed item only, so an unnumbered bonus item at the top made every new vote "Not an episode."; it now uses the highest numbered episode. It also says "1 vote", not "1 votes".
+- The internal `newEp` argument of `!latest` is no longer user-visible (anyone could trigger the announcement reactions).
 
 ## Environment variables
 
