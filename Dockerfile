@@ -16,11 +16,16 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first, so code changes don't reinstall them.
+# Dependencies first, so code changes don't reinstall them. The workspace member's pyproject is
+# needed for uv to read the lockfile, but the worker itself is not installed or copied.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+COPY clip-worker/pyproject.toml clip-worker/README.md clip-worker/
+RUN uv sync --frozen --no-dev --no-install-workspace
 
-COPY . .
+COPY alembic.ini ./
+COPY migrations migrations
+COPY assets assets
+COPY src src
 RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --uid 1000 yks

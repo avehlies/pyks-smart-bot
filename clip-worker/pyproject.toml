@@ -1,0 +1,24 @@
+[project]
+name = "yks-clip-worker"
+version = "0.1.0"
+description = "Transcribes YKS clips posted in Discord; a sidecar to the YKS Smart Bot"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+# Deliberately independent of the bot package: it only shares the database (the `clips` table).
+dependencies = [
+    "asyncpg>=0.30",
+    "httpx>=0.28",
+    "pydantic-settings>=2.16",
+    "faster-whisper>=1.2",
+]
+
+[project.scripts]
+yks-clip-worker = "yks_clip_worker.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yks_clip_worker"]

@@ -47,5 +47,23 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Sidecar: transcribes clips the bot records (separate image, no bot code).
+  clip-worker:
+    build:
+      context: .
+      dockerfile: clip-worker/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://yks:${POSTGRES_PASSWORD:-yks}@postgres:5432/yks
+    volumes:
+      - whisper-models:/models
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  whisper-models:
