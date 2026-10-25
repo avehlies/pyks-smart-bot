@@ -110,9 +110,11 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - ⏸ ⏹ ▶️ reaction controls on the Now playing message; stop asks ✅/❌ with a 10 s timeout, and only the person who reacted can answer. Status updates ("Paused at …", "Resuming.", "Finished playing episode.") go into one reply that's edited in place. Temp files and the voice connection are cleaned up on finish, error or failed download.
 - `!listen url <link>` (play any audio URL) is owner-only.
 
-### Phase 9 — Data migration and cutover
-- `scripts/migrate_from_mongo.py`: read the Akairo `models` docs and the `clips` collection, parse the JSON-string values, write to Postgres idempotently. Existing transcriptions are kept, so nothing needs re-transcribing.
-- Cutover checklist: stop the TS bot → run the migration → start the compose stack → spot-check each command.
+### Phase 9 — Data migration and cutover ✅
+- `yks-import-mongo` (`src/yks/tools/mongo_import.py`, optional `migrate` extra for pymongo) reads the Akairo `models` docs and the `clips` collection. It decodes the JSON-string values (the `rssChannel` channel dump, the `bestEpByUser` map entries, the tally JSON strings) and upserts idempotently. `--dry-run` shows counts and warnings first.
+- Clips: the channel, attachment ID and filename come from the stored URL. Existing transcripts are kept, so nothing is re-transcribed. Empty transcripts (the TS bot's failure marker) are queued again unless `--keep-empty-transcripts` is passed. Rows the new bot already recorded get the old transcript without overwriting newer worker output.
+- Tallies get their channel from the configured IDs, and a timestamp from `ts` or, failing that, the message's snowflake.
+- The cutover checklist and rollback are in the README ("Moving over from the TypeScript bot").
 
 ### Backlog
 - Revive `!kickstarter` / `!realorfake` / `!episode` on a current LLM API (and product images).
