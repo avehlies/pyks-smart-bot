@@ -1,0 +1,48 @@
+[project]
+name = "pyks-smart-bot"
+version = "0.1.0"
+description = "YKS Smart Bot — Your Kickstarter Sucks Discord bot, in Python"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py[voice]>=2.7.1",
+    "pydantic-settings>=2.16",
+    "sqlalchemy[asyncio]>=2.0.40",
+    "asyncpg>=0.30",
+    "alembic>=1.16",
+    "aiohttp>=3.11",
+    "httpx>=0.28",
+    "feedparser>=6.0.11",
+    "pillow>=11",
+]
+
+[project.optional-dependencies]
+# Heavy dependencies only the clip worker needs (Phase 6).
+worker = ["faster-whisper>=1.2"]
+
+[project.scripts]
+yks-bot = "yks.bot.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=1.0", "ruff>=0.12"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yks"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]

@@ -1,0 +1,46 @@
+x-app: &app
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+asyncpg://yks:${POSTGRES_PASSWORD:-yks}@postgres:5432/yks
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: yks
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yks}
+      POSTGRES_DB: yks
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432" # for local tools; not exposed publicly
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yks -d yks"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Applies database migrations, then exits. The bot waits for it.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  bot:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
