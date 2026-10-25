@@ -1,3 +1,4 @@
+from yks.db import guilds
 from yks.db.engine import Database
 from yks.db.models import (
     Base,
@@ -22,4 +23,5 @@ __all__ = [
     "ReactionTally",
     "TallyKind",
     "WelcomedMember",
+    "guilds",
 ]
