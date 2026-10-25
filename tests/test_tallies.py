@@ -128,7 +128,7 @@ async def test_deleted_message_drops_its_tally(
 ) -> None:
     letter = mailbag.post("Dear YKS...")
     await cog(bot).refresh_tally(react(letter, 2))
-    del mailbag.history[letter.id]
+    del mailbag.stored[letter.id]
     await cog(bot).refresh_tally(react(letter, 1))
     assert await tallies(db, TallyKind.MAILBAG, guild) == []
 
@@ -202,7 +202,7 @@ async def test_topmail_forgets_deleted_messages(
     kept = mailbag.post("still here", author=FakeUser(name="carol"))
     await cog(bot).refresh_tally(react(gone, 4))
     await cog(bot).refresh_tally(react(kept, 2))
-    del mailbag.history[gone.id]
+    del mailbag.stored[gone.id]
     await say(bot, general, "!topmail", FakeUser())
     assert [f.name for f in general.embeds[0].fields] == ["1. From carol"]
     assert await tallies(db, TallyKind.MAILBAG, guild) == [(kept.id, 2)]

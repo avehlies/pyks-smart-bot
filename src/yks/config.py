@@ -64,13 +64,12 @@ class Settings(BaseSettings):
     bot_auth_username: str = ""
     bot_auth_password: str = ""
 
-    # Clip worker
-    transcribe_clips: bool = False
-    whisper_model: str = "tiny.en"
-
     # Local timezone for date-based behaviour ("today", Burgy day). The show is in Tennessee.
     bot_timezone: str = "America/Chicago"
     assets_dir: Path = DEFAULT_ASSETS_DIR
+
+    # Walk the whole clip channel history on startup and record missed clips.
+    gather_all_clips: bool = False
 
     log_level: str = Field(default="INFO")
 

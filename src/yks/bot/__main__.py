@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from yks.bot.client import YKSBot
+from yks.bot.web import start_web
 from yks.config import Settings, get_settings
 from yks.db import Database
 from yks.log import setup_logging
@@ -29,7 +30,11 @@ async def run(settings: Settings) -> None:
         await db.ping()
         log.info("Connected to the database.")
         async with YKSBot(settings, db) as bot:
-            await bot.start(settings.auth_token)
+            web_runner = await start_web(bot, settings.port)
+            try:
+                await bot.start(settings.auth_token)
+            finally:
+                await web_runner.cleanup()
     finally:
         await db.dispose()
 

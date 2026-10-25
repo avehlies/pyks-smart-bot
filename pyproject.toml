@@ -18,10 +18,6 @@ dependencies = [
     "tzdata>=2025.2", # zoneinfo data on Windows
 ]
 
-[project.optional-dependencies]
-# Heavy dependencies only the clip worker needs (Phase 6).
-worker = ["faster-whisper>=1.2"]
-
 [project.scripts]
 yks-bot = "yks.bot.__main__:main"
 

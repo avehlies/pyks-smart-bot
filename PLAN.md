@@ -88,16 +88,16 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `!topmail` (aliases `!topmailbag`, `!bestmailbag`, `!bestmail`): top 10 from the last 30 days, skipping the bot's own messages, 1024-character limit. `!topks` (aliases `!topkickstarters`, `!bestkickstarters`, `!bestks`).
 - Daily task (09:00 UTC, and once at startup) that deletes mailbag tallies older than 30 days.
 
-### Phase 5 — Clips (bot side)
-- `on_message` in the clip channel: insert a `pending` row for each audio/video attachment, skipping the bot itself and user `789204496097214514`, then `NOTIFY clips_new`.
-- `!clip` / `!climp` etc.: pick a random non-deleted clip, fetch the message, post a fresh attachment URL; if the message is gone (404), mark the clip deleted and retry (instead of up to 100 blind attempts).
-- `POST /api/share-clip` (Basic auth with `BOT_AUTH_USERNAME`/`BOT_AUTH_PASSWORD`; body `userId`, `page`, `url`) posts to the clip channel.
+### Phase 5 — Clips (bot side) ✅
+- `on_message` in the clip channel records a `pending` row per audio/video attachment (skipping the bot itself and user `789204496097214514`). The database trigger sends `NOTIFY clips_new` for the worker. Deleting a message flags its clips `deleted`.
+- `!clip` / `!climp` (and `!clips`, `!randomclip`, `!climps`, `!randomclimp`): picks a random clip, fetches its message from the clip channel, and re-uploads the attachment. Files too big for the bot to upload are posted as a link. Deleted messages are flagged and another clip is picked.
+- History backfill lives in the bot (recording clips is a bot job): `GATHER_ALL_CLIPS=true` on startup, as before, or the owner-only `!backfillclips`.
+- `POST /api/share-clip` (Basic auth with `BOT_AUTH_USERNAME`/`BOT_AUTH_PASSWORD`; JSON `userId`, `page`, `url`) posts to the clip channel and returns a proper status. `GET /healthz` is used by the Docker healthcheck.
 
 ### Phase 6 — Clip worker sidecar
 - A loop that waits on `LISTEN clips_new` (with a polling fallback), claims one job at a time with `SKIP LOCKED`, and puts stuck `processing` jobs back after a timeout.
 - **Refreshes the attachment URL through the Discord REST API before downloading.** Discord CDN links are signed and expire, and the TS bot stored them for later downloads, so old backfills could fail.
 - Pipeline: download (httpx, streamed to a temp dir) → ffmpeg to 16 kHz mono WAV → faster-whisper → save the transcript. `failed` after N attempts, with the error recorded.
-- `yks-clip-worker backfill`: page through the clip channel's full history over REST and add the rows the bot missed (replaces `GATHER_ALL_CLIPS=true`).
 - A separate image with the `[worker]` extra, so the bot image stays small. Controlled by `TRANSCRIBE_CLIPS` and `WHISPER_MODEL`.
 
 ### Phase 7 — `/findtheclimp`
@@ -126,6 +126,8 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - The April 7 "no cooldown" exemption for `!mug`/`!burgy` is calculated only once at process start.
 - The kickstarter reaction listener crashes on messages without embeds.
 - Each clip message keeps only its last attachment in the DB.
+- `!clip` fetched the clip's message from whatever channel the command was used in, so it only worked inside the clip channel; it now always reads from the clip channel. It re-uploads only files the bot is allowed to upload and links bigger ones, and stops after 10 picks instead of making up to 100 blind fetches.
+- `/api/share-clip` never answered the HTTP request (callers hung until timeout); it now returns 200/400/401/502/503 JSON. Credentials are compared in constant time, and `userId` must be numeric (it's put into a mention).
 - Every slash command is deleted and re-registered on each startup.
 - `!help` still lists the disabled kickstarter commands.
 - The `hello` trigger used up its 1-hour cooldown on *any* message containing "hi"/"sup"/etc. (even "this"), so a later real greeting was ignored. Now the cooldown only counts when the bot is mentioned.

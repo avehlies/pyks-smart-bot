@@ -1,8 +1,7 @@
-# One image for the bot (and, from Phase 6, the clip worker).
-# Build the worker variant with: docker build --build-arg EXTRAS="--extra worker" .
+# The Discord bot. (The clip transcription worker has its own image: clip-worker/Dockerfile.)
 FROM python:3.12-slim
 
-# ffmpeg: voice playback (bot) and audio conversion (worker).
+# ffmpeg: voice playback for !listen.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -17,14 +16,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-ARG EXTRAS=""
-
 # Dependencies first, so code changes don't reinstall them.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project ${EXTRAS}
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
-RUN uv sync --frozen --no-dev ${EXTRAS}
+RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --uid 1000 yks
 USER yks
