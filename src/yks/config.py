@@ -7,7 +7,9 @@ Variable names match the TypeScript bot so an existing `.env` mostly carries ove
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BeforeValidator, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -21,6 +23,9 @@ def _blank_to_none(value: Any) -> Any:
 
 
 OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
+
+# Repository root /assets (works for the editable install used in development and Docker).
+DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
 
 
 def normalize_database_url(url: str) -> str:
@@ -63,7 +68,21 @@ class Settings(BaseSettings):
     transcribe_clips: bool = False
     whisper_model: str = "tiny.en"
 
+    # Local timezone for date-based behaviour ("today", Burgy day). The show is in Tennessee.
+    bot_timezone: str = "America/Chicago"
+    assets_dir: Path = DEFAULT_ASSETS_DIR
+
     log_level: str = Field(default="INFO")
+
+    @property
+    def tz(self) -> ZoneInfo:
+        return ZoneInfo(self.bot_timezone)
+
+    @field_validator("bot_timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        ZoneInfo(value)  # raises if unknown
+        return value
 
     @field_validator("database_url")
     @classmethod

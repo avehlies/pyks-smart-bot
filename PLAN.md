@@ -66,9 +66,11 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - Global error handler (cooldown and check failures are silent, like the TS bot), plus an empty, configurable user blocklist (the old blacklist inhibitor).
 - Dockerfile + docker-compose with Postgres. **Done when:** `docker compose up` migrates the DB and the bot comes online. Owner-only `!ping` reports gateway and database latency.
 
-### Phase 1 — Easter eggs and simple commands
-- Port all 25 `simpleCommands` entries into a Python data table (text / reply / embed / file / random file / random text, with alias or regex triggers, per-user cooldowns, guild gate).
-- `!burgy` (days since 2021-04-07; no cooldown on April 7), `!emma` (random guild emoji), `hello` (only when the bot is mentioned), `the … store` reaction, `!help` (update the text to drop the retired kickstarter commands).
+### Phase 1 — Easter eggs and simple commands ✅
+- All 24 `simpleCommands` entries, as a Python data table (`yks/bot/simple_commands.py`): text / reply / embed / file / random file / random text, alias or regex triggers, per-user cooldowns, guild gate.
+- A message-trigger engine (`yks/bot/triggers.py`) replaces Akairo's regex commands: it runs only on messages that aren't valid commands, every matching trigger fires, and each has its own per-user cooldown.
+- `!burgy` (days since 2021-04-07; on April 7 its cooldown and `!mug`'s drop to the 1 s default), `!emma` (random guild emoji), `hello` (only when the bot is mentioned), the `the … store` reaction, `!help`.
+- `BOT_TIMEZONE` (default `America/Chicago`) decides what "today" is.
 
 ### Phase 2 — Guild settings and member welcome
 - `!welcome` toggle (Manage Roles), `!rssChannel #channel` (admin or user `329288617564569602`), `!newmember <id>` (owner only).
@@ -124,6 +126,10 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - Each clip message keeps only its last attachment in the DB.
 - Every slash command is deleted and re-registered on each startup.
 - `!help` still lists the disabled kickstarter commands.
+- The `hello` trigger used up its 1-hour cooldown on *any* message containing "hi"/"sup"/etc. (even "this"), so a later real greeting was ignored. Now the cooldown only counts when the bot is mentioned.
+- `!emma` sometimes sent nothing when one of its five emojis was missing; it now picks from the ones that exist.
+- Three `!staysippin` photos were 10–13 MB phone originals, over Discord's 10 MB bot upload limit (on servers without enough boosts). They're downscaled to 2048 px.
+- `!staysippin` uploaded some JPEGs under `.png` names; files now keep their real names.
 
 ## Environment variables
 

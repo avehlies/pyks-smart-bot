@@ -34,6 +34,18 @@ TEST_DATABASE_URL=postgresql://yks:yks@localhost:5432/yks_test uv run pytest
 
 Without `TEST_DATABASE_URL`, the database tests are skipped.
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and on every pull request:
+
+- **Lint:** `ruff check` and `ruff format --check`.
+- **Tests:** applies the migrations to a Postgres service container, runs `alembic check` (fails if the models changed without a migration), then runs `pytest`.
+- **Docker build:** builds the image without pushing it.
+
+### Adding a simple command
+
+Most fixed-response commands are a single entry in `SIMPLE_COMMANDS` in `src/yks/bot/simple_commands.py`; put any images in `assets/`. Tests check that aliases are unique and that every image exists and is under Discord's 10 MB upload limit.
+
 ### Database migrations
 
 After changing `src/yks/db/models.py`:
@@ -49,12 +61,15 @@ Review the generated file in `migrations/versions/` before committing.
 
 ```
 src/yks/
-  config.py        settings from environment / .env
-  db/              SQLAlchemy models and engine
+  config.py             settings from environment / .env
+  db/                   SQLAlchemy models and engine
   bot/
-    client.py      bot class: prefix, intents, global checks, extension loading
-    checks.py      per-user cooldowns and per-guild rate gate
-    cogs/          one module per feature
-migrations/        Alembic migrations
+    client.py           bot class: prefix, intents, global checks, extension loading
+    checks.py           per-user cooldowns and per-guild rate gate
+    triggers.py         regex "easter egg" triggers on ordinary messages
+    simple_commands.py  data table of config-driven commands (text/embed/file responses)
+    cogs/               one module per feature
+assets/                 images the bot posts
+migrations/             Alembic migrations
 tests/
 ```

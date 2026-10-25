@@ -32,16 +32,39 @@ def _is_owner(ctx: commands.Context[Any]) -> bool:
     return owner_id is not None and ctx.author.id == owner_id
 
 
-def akairo_cooldown(ms: int, rate: int = 1) -> Callable[[T], T]:
-    """Allow `rate` uses per user every `ms` milliseconds. The bot owner is exempt."""
+def akairo_cooldown(
+    ms: int, rate: int = 1, *, relax_when: Callable[[Any], bool] | None = None
+) -> Callable[[T], T]:
+    """Allow `rate` uses per user every `ms` milliseconds. The bot owner is exempt.
+
+    `relax_when(bot)` returning True swaps in the 1 s default instead (e.g. `!mug` on April 7).
+    """
     per = ms / 1000
 
     def factory(ctx: commands.Context[Any]) -> commands.Cooldown | None:
         if _is_owner(ctx):
             return None
+        if relax_when is not None and relax_when(ctx.bot):
+            return commands.Cooldown(1, DEFAULT_COOLDOWN_MS / 1000)
         return commands.Cooldown(rate, per)
 
     return commands.dynamic_cooldown(factory, commands.BucketType.user)
+
+
+class MessageCooldown:
+    """Per-user cooldown for message triggers (regex easter eggs), same semantics as above."""
+
+    def __init__(self, ms: int = DEFAULT_COOLDOWN_MS, rate: int = 1) -> None:
+        self._mapping: commands.CooldownMapping[Any] = commands.CooldownMapping.from_cooldown(
+            rate, ms / 1000, commands.BucketType.user
+        )
+
+    def consume(self, message: Any, *, owner_id: int | None) -> bool:
+        """Record a use. Returns False if the user is still cooling down."""
+        if owner_id is not None and message.author.id == owner_id:
+            return True
+        bucket = self._mapping.get_bucket(message)
+        return bucket is None or not bucket.update_rate_limit()
 
 
 class DefaultCooldown:
