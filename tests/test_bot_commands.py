@@ -5,11 +5,8 @@ from __future__ import annotations
 import sys
 from collections.abc import AsyncIterator
 from datetime import date
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
-from discord.ext import commands
 
 import yks.bot.utils as bot_utils
 from yks.bot.client import YKSBot
@@ -17,22 +14,15 @@ from yks.config import Settings
 from yks.db import Database
 
 from .fakes import BOT_USER_ID, FakeChannel, FakeEmoji, FakeGuild, FakeMessage, FakeUser, sent_files
+from .harness import make_bot, patch_context_send, say
 
 
 @pytest.fixture
 async def bot(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[YKSBot]:
-    # Route ctx.send to the fake channel (the real one needs a gateway connection).
-    async def ctx_send(self: commands.Context[Any], content: Any = None, **kwargs: Any) -> Any:
-        return await self.channel.send(content, **kwargs)
-
-    monkeypatch.setattr(commands.Context, "send", ctx_send)
+    patch_context_send(monkeypatch)
     settings = Settings(_env_file=None, yks_clip_channel_id=4242)
     db = Database(settings.database_url)  # never connected in these tests
-    instance = YKSBot(settings, db)
-    instance._connection.user = SimpleNamespace(id=BOT_USER_ID, mention=f"<@{BOT_USER_ID}>")
-    await instance._async_setup_hook()  # attaches the event loop, as login() would
-    await instance.setup_hook()
-    yield instance
+    yield await make_bot(settings, db)
     await db.dispose()
 
 
@@ -44,13 +34,6 @@ def guild() -> FakeGuild:
 @pytest.fixture
 def channel(guild: FakeGuild) -> FakeChannel:
     return FakeChannel(guild=guild)
-
-
-async def say(bot: YKSBot, channel: FakeChannel, content: str, author: FakeUser, **kw: Any) -> None:
-    """Deliver a message the way discord.py does: commands, then on_message listeners."""
-    message = FakeMessage(content=content, author=author, channel=channel, **kw)
-    await bot.process_commands(message)  # type: ignore[arg-type]
-    await bot.get_cog("Triggers").on_message(message)  # type: ignore[union-attr]
 
 
 def set_today(monkeypatch: pytest.MonkeyPatch, today: date) -> None:

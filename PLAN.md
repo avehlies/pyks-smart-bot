@@ -72,9 +72,10 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `!burgy` (days since 2021-04-07; on April 7 its cooldown and `!mug`'s drop to the 1 s default), `!emma` (random guild emoji), `hello` (only when the bot is mentioned), the `the … store` reaction, `!help`.
 - `BOT_TIMEZONE` (default `America/Chicago`) decides what "today" is.
 
-### Phase 2 — Guild settings and member welcome
-- `!welcome` toggle (Manage Roles), `!rssChannel #channel` (admin or user `329288617564569602`), `!newmember <id>` (owner only).
-- `on_member_join`: welcome each member only once; build the welcome image with **Pillow** (avatar clipped to a circle, auto-shrinking multi-line green text, bundled DejaVu font); random greeting line; post to the system channel.
+### Phase 2 — Guild settings and member welcome ✅
+- `!welcome` toggle (needs Manage Roles), `!rssChannel <#channel | id | name>` (administrators or user `329288617564569602`), `!newmember <id>` (owner only).
+- `on_member_join`: each member is welcomed at most once per guild (an atomic insert into `welcomed_members`). The welcome image is built with **Pillow**: avatar clipped to a circle, green multi-line text that shrinks to fit (long lines squeezed to 550 px like canvas `maxWidth`), DejaVu Sans bundled in `assets/fonts/`. It posts to the system channel with one of the nine original greetings.
+- Rendering runs in a worker thread so it doesn't block the bot.
 
 ### Phase 3 — Podcast feeds
 - `feeds.py`: `httpx` + `feedparser` with a ~15 s cache (the TS bot re-downloads both feeds on every command).
@@ -130,6 +131,8 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `!emma` sometimes sent nothing when one of its five emojis was missing; it now picks from the ones that exist.
 - Three `!staysippin` photos were 10–13 MB phone originals, over Discord's 10 MB bot upload limit (on servers without enough boosts). They're downscaled to 2048 px.
 - `!staysippin` uploaded some JPEGs under `.png` names; files now keep their real names.
+- `!rssChannel` stored a JSON dump of the whole channel object; it now stores the channel ID.
+- Guilds without a system channel made the welcome listener fail; it now skips them, with a log line.
 
 ## Environment variables
 
