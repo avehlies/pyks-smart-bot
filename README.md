@@ -63,7 +63,7 @@ Review the generated file in `migrations/versions/` before committing.
 src/yks/
   config.py             settings from environment / .env
   feeds.py              podcast RSS fetching, parsing and caching
-  db/                   SQLAlchemy models, engine, and queries (guilds.py, ...)
+  db/                   SQLAlchemy models, engine, and queries (guilds, state, votes, tallies)
   bot/
     client.py           bot class: prefix, intents, global checks, extension loading
     checks.py           per-user cooldowns and per-guild rate gate

@@ -162,7 +162,7 @@ async def test_triggers_skip_valid_commands(bot: YKSBot, channel: FakeChannel) -
 async def test_the_store_reaction(bot: YKSBot, channel: FakeChannel) -> None:
     msg = FakeMessage(content="going to the grocery store", author=FakeUser(), channel=channel)
     await bot.get_cog("Triggers").on_message(msg)  # type: ignore[union-attr]
-    assert [e.name for e in msg.reactions] == ["thestore"]
+    assert [r.emoji.name for r in msg.reactions] == ["thestore"]
 
 
 async def test_hello_needs_mention_and_doesnt_burn_cooldown(

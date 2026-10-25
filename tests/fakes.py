@@ -90,6 +90,8 @@ class FakeChannel:
     name: str = "general"
     type: discord.ChannelType | None = None
     sent: list[Sent] = field(default_factory=list)
+    # Messages that fetch_message() can find (add with `post()`).
+    history: dict[int, FakeMessage] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.type is None:
@@ -103,6 +105,18 @@ class FakeChannel:
 
     def permissions_for(self, member: Any) -> discord.Permissions:
         return member.guild_permissions
+
+    def post(self, content: str = "", author: FakeUser | None = None, **kwargs: Any) -> FakeMessage:
+        """Put a message in this channel's history (as if someone had posted it)."""
+        message = FakeMessage(content=content, author=author or FakeUser(), channel=self, **kwargs)
+        self.history[message.id] = message
+        return message
+
+    async def fetch_message(self, message_id: int) -> FakeMessage:
+        try:
+            return self.history[message_id]
+        except KeyError:
+            raise discord.NotFound(_FakeResponse(404), "Unknown Message") from None
 
     async def send(self, content: str | None = None, **kwargs: Any) -> Any:
         message = FakeMessage(content=content or "", author=FakeUser(id=BOT_USER_ID), channel=self)
@@ -153,8 +167,9 @@ class FakeMessage:
     author: FakeUser
     channel: FakeChannel
     mentions: list[FakeUser] = field(default_factory=list)
-    reactions: list[Any] = field(default_factory=list)
+    reactions: list[FakeReaction] = field(default_factory=list)
     attachments: list[Any] = field(default_factory=list)
+    embeds: list[discord.Embed] = field(default_factory=list)
     id: int = field(default_factory=_next_id)
     _state: Any = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -167,8 +182,31 @@ class FakeMessage:
     async def reply(self, content: str | None = None, **kwargs: Any) -> Any:
         self.channel.sent.append(Sent(content, kwargs, reply_to=self.id))
 
+    @property
+    def jump_url(self) -> str:
+        guild = self.guild.id if self.guild else "@me"
+        return f"https://discord.com/channels/{guild}/{self.channel.id}/{self.id}"
+
+    def set_reaction_count(self, name: str, count: int) -> None:
+        """Simulate `count` users having reacted with the named emoji."""
+        self.reactions = [r for r in self.reactions if r.emoji.name != name]
+        if count:
+            self.reactions.append(FakeReaction(FakeEmoji(name), count))
+
     async def add_reaction(self, emoji: Any) -> None:
-        self.reactions.append(emoji)
+        for reaction in self.reactions:
+            if reaction.emoji is emoji:
+                reaction.count += 1
+                reaction.me = True
+                return
+        self.reactions.append(FakeReaction(emoji, 1, me=True))
+
+
+@dataclass(eq=False)
+class FakeReaction:
+    emoji: Any
+    count: int = 1
+    me: bool = False
 
 
 def sent_files(channel: FakeChannel) -> list[discord.File]:

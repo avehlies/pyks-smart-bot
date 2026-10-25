@@ -23,6 +23,7 @@ EXTENSIONS: tuple[str, ...] = (
     "yks.bot.cogs.help",
     "yks.bot.cogs.welcome",
     "yks.bot.cogs.feeds",
+    "yks.bot.cogs.tallies",
 )
 
 

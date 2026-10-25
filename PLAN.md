@@ -82,10 +82,11 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `!latest [main|bonus|premium|patreon|both]` (aliases `!eps`, `!recent`), `!today`, `!best [episode]` (vote, change a vote, top 10 with random tie-breaks, the Episode 101 joke).
 - A watcher every 20 s: detects new main/bonus episodes, sets the "Listening to …" presence, and announces in each guild's RSS channel with the 1ohno/2they/3did/40another/yks reactions. Public episodes cross-posted to Patreon are announced once.
 
-### Phase 4 — Reaction tallies
-- `on_raw_reaction_add/remove` (the raw events handle uncached messages, replacing partials): `:this:` reactions in the mailbag channel, and on the bot's own embeds in the kickstarter channel.
-- `!topmail` (top 10 from the last 30 days, skipping the bot's own messages, 1024-character limit), `!topks`.
-- Daily task that deletes mailbag tallies older than 30 days.
+### Phase 4 — Reaction tallies ✅
+- `on_raw_reaction_add/remove` (raw events also cover uncached messages, replacing partials): `:this:` reactions in the mailbag channel, and on the bot's own kickstarter embeds (with a footer) in the kickstarter channel.
+- Each event re-reads the message's real `:this:` count from Discord and stores it (`reaction_tallies`), deleting the row at zero.
+- `!topmail` (aliases `!topmailbag`, `!bestmailbag`, `!bestmail`): top 10 from the last 30 days, skipping the bot's own messages, 1024-character limit. `!topks` (aliases `!topkickstarters`, `!bestkickstarters`, `!bestks`).
+- Daily task (09:00 UTC, and once at startup) that deletes mailbag tallies older than 30 days.
 
 ### Phase 5 — Clips (bot side)
 - `on_message` in the clip channel: insert a `pending` row for each audio/video attachment, skipping the bot itself and user `789204496097214514`, then `NOTIFY clips_new`.
@@ -140,6 +141,9 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - On a fresh database the watcher announced the current episodes as new on first start; it now just records them. (After the Phase 9 data import, the old "last seen" titles carry over anyway.)
 - `!best` read the newest episode number from the first feed item only, so an unnumbered bonus item at the top made every new vote "Not an episode."; it now uses the highest numbered episode. It also says "1 vote", not "1 votes".
 - The internal `newEp` argument of `!latest` is no longer user-visible (anyone could trigger the announcement reactions).
+- Reaction tallies were +1/-1 counters, so events missed while the bot was down left them wrong forever; they now store the real count read from Discord on every event.
+- The kickstarter reaction listener crashed on messages without embeds; `!topmail`/`!topks` crashed when a tallied message had been deleted. Deleted messages now drop out of the tallies.
+- `!topmail` relied solely on the daily cleanup for its 30-day window; it now also filters by date when listing, and says so when there's nothing to show.
 
 ## Environment variables
 
