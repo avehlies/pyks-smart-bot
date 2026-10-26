@@ -30,3 +30,10 @@ def test_blocked_user_ids_parse_comma_list(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_blocked_user_ids_default_empty() -> None:
     assert Settings(_env_file=None).blocked_user_ids == frozenset()
+
+
+def test_blank_owner_id_uses_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OWNER_ID", "")
+    assert Settings(_env_file=None).owner_id == 293571605081358336
+    monkeypatch.setenv("OWNER_ID", "123")
+    assert Settings(_env_file=None).owner_id == 123

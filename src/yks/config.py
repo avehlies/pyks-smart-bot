@@ -24,6 +24,9 @@ def _blank_to_none(value: Any) -> Any:
 
 OptionalId = Annotated[int | None, BeforeValidator(_blank_to_none)]
 
+# The TS bot's hard-coded owner; override with OWNER_ID.
+DEFAULT_OWNER_ID = 293571605081358336
+
 # Repository root /assets (works for the editable install used in development and Docker).
 DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
 
@@ -41,7 +44,7 @@ class Settings(BaseSettings):
 
     # Discord
     auth_token: str = ""
-    owner_id: int = 293571605081358336
+    owner_id: int = DEFAULT_OWNER_ID
     command_prefix: str = "!"
     # Comma-separated user IDs the bot ignores entirely (the old "blacklist" inhibitor).
     blocked_user_ids: Annotated[frozenset[int], NoDecode] = frozenset()
@@ -82,6 +85,11 @@ class Settings(BaseSettings):
     def _valid_timezone(cls, value: str) -> str:
         ZoneInfo(value)  # raises if unknown
         return value
+
+    @field_validator("owner_id", mode="before")
+    @classmethod
+    def _default_owner(cls, value: Any) -> Any:
+        return DEFAULT_OWNER_ID if _blank_to_none(value) is None else value
 
     @field_validator("database_url")
     @classmethod
