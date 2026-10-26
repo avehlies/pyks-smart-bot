@@ -35,6 +35,10 @@ services:
 
   bot:
     <<: *app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://yks:${POSTGRES_PASSWORD:-yks}@postgres:5432/yks
+      # Inside the container the API always listens on 3000; PORT only picks the host port.
+      PORT: "3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
