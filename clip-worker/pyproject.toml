@@ -11,6 +11,9 @@ dependencies = [
     "httpx>=0.28",
     "pydantic-settings>=2.16",
     "faster-whisper>=1.2",
+    # faster-whisper 1.2.x calls av.open(..., metadata_errors=...), which PyAV 19 removed.
+    # Remove this cap once a faster-whisper release supports PyAV 19.
+    "av>=16,<19",
 ]
 
 [project.scripts]
