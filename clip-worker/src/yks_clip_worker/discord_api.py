@@ -43,7 +43,11 @@ class DiscordAPI:
             if response.status_code == 404:
                 return None
             if response.status_code >= 400:
-                raise DiscordError(f"GET message failed: HTTP {response.status_code}")
+                # Discord's body says why, e.g. {"code": 50001, "message": "Missing Access"}.
+                raise DiscordError(
+                    f"GET message {message_id} in channel {channel_id} failed: "
+                    f"HTTP {response.status_code} {response.text[:200]}"
+                )
             return response.json()
         raise DiscordError("Rate limited repeatedly")
 
