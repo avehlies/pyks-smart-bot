@@ -36,6 +36,14 @@ class SyncTranscriber(Protocol):
     def transcribe(self, path: Path) -> str: ...
 
 
+def has_audio(path: Path) -> bool:
+    """Does the file have at least one audio stream?"""
+    import av  # comes with faster-whisper; only needed in the child process
+
+    with av.open(str(path)) as container:
+        return len(container.streams.audio) > 0
+
+
 class WhisperTranscriber:
     """Blocking faster-whisper wrapper. Loads the model on first use (the first run downloads it
     into the Hugging Face cache). Used inside the child process."""
@@ -69,6 +77,10 @@ class WhisperTranscriber:
             return self._model
 
     def transcribe(self, path: Path) -> str:
+        if not has_audio(path):
+            # faster-whisper raises IndexError on files with no audio track (e.g. silent videos).
+            log.info("%s has no audio track; nothing to transcribe.", path.name)
+            return ""
         model = self._load()
         language = "en" if self._name.endswith(".en") else None
         segments, _info = model.transcribe(
