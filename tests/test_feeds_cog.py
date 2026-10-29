@@ -8,14 +8,13 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 
 from yks.bot.client import YKSBot
 from yks.bot.cogs.feeds import FEED_UNAVAILABLE
 from yks.config import Settings
 from yks.db import Database, guilds
-from yks.feeds import FeedClient
+from yks.feeds import FeedClient, FeedError
 
 from .fakes import FakeChannel, FakeEmoji, FakeGuild, FakeUser
 from .harness import make_bot, patch_context_send, say
@@ -49,10 +48,10 @@ class FeedServer:
         first = feed.index("<item>")
         self.feeds[url] = feed[:first] + item_xml.strip() + "\n    " + feed[first:]
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    async def fetch(self, url: str) -> bytes:
         if self.down:
-            return httpx.Response(502, text="Bad Gateway")
-        return httpx.Response(200, text=self.feeds[str(request.url)])
+            raise FeedError("Could not fetch feed: HTTP Error 502: Bad Gateway")
+        return self.feeds[url].encode()
 
 
 @pytest.fixture
@@ -70,11 +69,9 @@ async def bot(
     )
     instance = await make_bot(settings, db)
     instance.get_cog("Feeds").watch_feeds.cancel()  # tests drive check_feeds() directly
-    http = httpx.AsyncClient(transport=httpx.MockTransport(server.handler))
-    instance.feeds = FeedClient(http, ttl=0)  # always re-read, so edits show up
+    instance.feeds = FeedClient(server.fetch, ttl=0)  # always re-read, so edits show up
     monkeypatch.setattr(instance, "change_presence", AsyncMock())
     yield instance
-    await http.aclose()
     await instance.http_client.aclose()
 
 

@@ -52,7 +52,7 @@ class YKSBot(commands.Bot):
         self.guild_gate = GuildGate()
         self.triggers = TriggerRegistry()
         self.http_client = make_http_client()
-        self.feeds = FeedClient(self.http_client)
+        self.feeds = FeedClient()
         self.add_check(DefaultCooldown())
         self.add_check(self._not_blocked)
 
