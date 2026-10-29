@@ -9,7 +9,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import discord
-import httpx
 import pytest
 
 from yks.bot.cogs.feeds import rank_totals
@@ -125,31 +124,30 @@ class Clock:
 async def test_feed_client_caches_and_expires() -> None:
     hits = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    async def fetch(url: str) -> bytes:
         nonlocal hits
         hits += 1
-        return httpx.Response(200, content=(DATA / "main_feed.xml").read_bytes())
+        await asyncio.sleep(0)
+        return (DATA / "main_feed.xml").read_bytes()
 
     clock = Clock()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        client = FeedClient(http, ttl=15, clock=clock)
-        feeds = await asyncio.gather(*(client.get("https://feeds.test/main") for _ in range(5)))
-        assert hits == 1  # concurrent requests share one download
-        assert all(f is feeds[0] for f in feeds)
-        clock.now = 14
-        await client.get("https://feeds.test/main")
-        assert hits == 1
-        clock.now = 16
-        await client.get("https://feeds.test/main")
-        assert hits == 2
+    client = FeedClient(fetch, ttl=15, clock=clock)
+    feeds = await asyncio.gather(*(client.get("https://feeds.test/main") for _ in range(5)))
+    assert hits == 1  # concurrent requests share one download
+    assert all(f is feeds[0] for f in feeds)
+    clock.now = 14
+    await client.get("https://feeds.test/main")
+    assert hits == 1
+    clock.now = 16
+    await client.get("https://feeds.test/main")
+    assert hits == 2
 
 
 async def test_feed_client_errors() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(503))
-    ) as http:
-        client = FeedClient(http)
-        with pytest.raises(FeedError):
-            await client.get("https://feeds.test/main")
-        with pytest.raises(FeedError):
-            await client.get("")  # not configured
+    client = FeedClient()
+    with pytest.raises(FeedError):
+        await client.get("https://feeds.invalid/main")  # can't resolve
+    with pytest.raises(FeedError):
+        await client.get("not a url")
+    with pytest.raises(FeedError):
+        await client.get("")  # not configured

@@ -13,7 +13,8 @@ import logging
 import re
 import time
 import unicodedata
-from collections.abc import Callable
+import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -123,15 +124,33 @@ def parse_feed(data: bytes | str) -> Feed:
     )
 
 
+def _download(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=20.0) as response:
+        return response.read()
+
+
+async def fetch_url(url: str) -> bytes:
+    """Download a feed. Raises FeedError.
+
+    This uses urllib rather than httpx: Patreon's Cloudflare challenges httpx's TLS handshake
+    (which offers ALPN) with a 403 "Just a moment..." page, but lets urllib's through.
+    """
+    try:
+        return await asyncio.to_thread(_download, url)
+    except (OSError, ValueError) as exc:  # URLError, HTTPError and timeouts are all OSErrors
+        raise FeedError(f"Could not fetch feed: {exc}") from exc
+
+
 class FeedClient:
     def __init__(
         self,
-        http: httpx.AsyncClient,
+        fetch: Callable[[str], Awaitable[bytes]] = fetch_url,
         *,
         ttl: float = 15.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._http = http
+        self._fetch = fetch
         self._ttl = ttl
         self._clock = clock
         self._cache: dict[str, tuple[float, Feed]] = {}
@@ -146,12 +165,7 @@ class FeedClient:
             cached = self._cache.get(url)
             if cached and self._clock() - cached[0] < self._ttl:
                 return cached[1]
-            try:
-                response = await self._http.get(url)
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                raise FeedError(f"Could not fetch feed: {exc}") from exc
-            feed = parse_feed(response.content)
+            feed = parse_feed(await self._fetch(url))
             self._cache[url] = (self._clock(), feed)
             return feed
 

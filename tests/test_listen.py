@@ -125,16 +125,18 @@ async def bot(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[YKSBot]:
     instance.get_cog("Feeds").watch_feeds.cancel()
     instance.get_cog("Tallies").prune_mailbag.cancel()
 
+    async def fetch(url: str) -> bytes:
+        assert url == MAIN_URL
+        return (DATA / "main_feed.xml").read_bytes()
+
     def handler(request: httpx.Request) -> httpx.Response:
-        if str(request.url) == MAIN_URL:
-            return httpx.Response(200, content=(DATA / "main_feed.xml").read_bytes())
         if str(request.url).endswith("/broken.mp3"):
             return httpx.Response(500)
         return httpx.Response(200, content=AUDIO)
 
     await instance.http_client.aclose()
     instance.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    instance.feeds = FeedClient(instance.http_client)
+    instance.feeds = FeedClient(fetch)
     listen = instance.get_cog("Listen")
     monkeypatch.setattr(listen, "make_source", lambda path: FakeAudio(frames=500))
     yield instance
