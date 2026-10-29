@@ -344,6 +344,7 @@ def test_whisper_transcriber_joins_segments(
     monkeypatch.setitem(
         sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeModel)
     )
+    monkeypatch.setattr("yks_clip_worker.transcriber.has_audio", lambda path: True)
     transcriber = WhisperTranscriber("tiny.en", compute_type="int8")
     assert transcriber.transcribe(tmp_path / "x.mp4") == "Oh no, they did another."
     assert calls["init"] == ("tiny.en", "cpu", "int8")
