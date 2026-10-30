@@ -46,7 +46,7 @@ FEED_CHOICES: dict[str, Which] = {
     "patreon": "bonus",
     "both": "both",
 }
-POLL_SECONDS = 20
+POLL_MINUTES = 10
 FEED_UNAVAILABLE = "Couldn't reach the podcast feed right now. Try again in a bit."
 
 
@@ -193,7 +193,7 @@ class Feeds(commands.Cog):
 
     # --- new-episode watcher --------------------------------------------------------------------
 
-    @tasks.loop(seconds=POLL_SECONDS)
+    @tasks.loop(minutes=POLL_MINUTES)
     async def watch_feeds(self) -> None:
         try:
             await self.check_feeds()
