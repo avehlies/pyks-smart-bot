@@ -46,7 +46,7 @@ class RecipeInterceptor(commands.Cog, name="recipe-interceptor"):
             return
         urls = rewrite_recipe_urls(message.content)
         if urls:
-            await message.reply("\n".join(urls), mention_author=False)
+            await message.reply("\n".join(urls), mention_author=False, suppress_embeds=True)
 
 
 async def setup(bot: YKSBot) -> None:
