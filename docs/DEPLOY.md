@@ -97,6 +97,7 @@ Most values carry over from the TypeScript bot's environment under the **same na
 | `YKS_CLIP_CHANNEL_ID` | The clip channel's ID | `YKS_CLIP_CHANNEL_ID` (same) |
 | `YKS_MAILBAG_CHANNEL_ID` | The mailbag channel's ID | `YKS_MAILBAG_CHANNEL_ID` (same) |
 | `YKS_KICKSTARTER_BOT_CHANNEL_ID` | The kickstarter-bot channel's ID | `YKS_KICKSTARTER_BOT_CHANNEL_ID` (same) |
+| `YKS_FOOD_CHANNEL_ID` | The food channel's ID (`682325132127371341`), where recipe links get a nyetcook.ing reply | (new) |
 | `MAIN_FEED_RSS` | Main podcast feed URL | `MAIN_FEED_RSS` (same) |
 | `BONUS_FEED_RSS` | Patreon feed URL | `BONUS_FEED_RSS` (same) |
 | `BOT_AUTH_USERNAME` / `BOT_AUTH_PASSWORD` | Credentials for `/api/share-clip` | Same names. Keep the same values so the im-at.work site keeps working. |
