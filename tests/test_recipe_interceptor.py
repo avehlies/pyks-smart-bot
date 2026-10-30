@@ -60,6 +60,7 @@ async def test_replies_in_the_food_channel(bot: YKSBot) -> None:
     [sent] = channel.sent
     assert sent.content == "https://nyetcook.ing/cooking.nytimes.com/recipes/1-x"
     assert sent.reply_to is not None
+    assert sent.kwargs["suppress_embeds"] is True
 
 
 async def test_ignores_other_channels_and_bots(bot: YKSBot) -> None:
