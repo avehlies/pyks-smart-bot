@@ -46,7 +46,7 @@ FEED_CHOICES: dict[str, Which] = {
     "patreon": "bonus",
     "both": "both",
 }
-POLL_MINUTES = 10
+POLL_MINUTES = 60
 FEED_UNAVAILABLE = "Couldn't reach the podcast feed right now. Try again in a bit."
 
 
