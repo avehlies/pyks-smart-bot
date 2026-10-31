@@ -78,7 +78,7 @@ Each phase ends with something runnable that can be tested on a test guild befor
 ### Phase 3 — Podcast feeds ✅
 - `yks/feeds.py`: `httpx` + `feedparser`, parsed into `Feed`/`Episode` objects, with a 15 s cache per URL (concurrent requests share one download). The TS bot re-downloaded both feeds on every command.
 - `!latest [main|bonus|premium|patreon|both]` (aliases `!eps`, `!recent`), `!today`, `!best [episode]` (vote, change a vote, top 10 with random tie-breaks, the Episode 101 joke).
-- A watcher every 10 minutes: detects new main/bonus episodes, sets the "Listening to …" presence, and announces in each guild's RSS channel with the 1ohno/2they/3did/40another/yks reactions. Public episodes cross-posted to Patreon are announced once.
+- A watcher every hour: detects new main/bonus episodes, sets the "Listening to …" presence, and announces in each guild's RSS channel with the 1ohno/2they/3did/40another/yks reactions. Public episodes cross-posted to Patreon are announced once.
 
 ### Phase 4 — Reaction tallies ✅
 - `on_raw_reaction_add/remove` (raw events also cover uncached messages, replacing partials): `:this:` reactions in the mailbag channel, and on the bot's own kickstarter embeds (with a footer) in the kickstarter channel.
