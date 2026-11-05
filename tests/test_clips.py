@@ -116,22 +116,44 @@ async def test_deleted_messages_are_flagged(
 # --- !clip ----------------------------------------------------------------------------------
 
 
-async def test_clip_reposts_the_file(
+async def test_clip_forwards_a_message_that_is_just_the_clip(
+    bot: YKSBot, clip_channel: FakeChannel, general: FakeChannel
+) -> None:
+    # Even one too big for the bot to upload: forwarding doesn't re-upload anything.
+    huge = FakeAttachment("long.mp4", size=50 * 1024 * 1024)
+    posted = clip_channel.post(attachments=[huge])
+    await cog(bot).record([posted])
+    await say(bot, general, "!clip", FakeUser())
+    (sent,) = general.sent
+    assert sent.kwargs == {"forward": posted}
+
+
+async def test_clip_reposts_the_file_from_a_message_with_text(
     bot: YKSBot, clip_channel: FakeChannel, general: FakeChannel
 ) -> None:
     attachment = FakeAttachment("funny.mp4", data=b"video bytes")
-    await cog(bot).record([clip_channel.post(attachments=[attachment])])
+    await cog(bot).record([clip_channel.post("lol", attachments=[attachment])])
     await say(bot, general, "!climp", FakeUser())
     (sent,) = general.sent
     assert sent.kwargs["file"].filename == "funny.mp4"
     assert sent.file_bytes == [b"video bytes"]
 
 
+async def test_clip_reposts_one_of_several_attachments(
+    bot: YKSBot, clip_channel: FakeChannel, general: FakeChannel
+) -> None:
+    video = FakeAttachment("funny.mp4")
+    image = FakeAttachment("pic.png", "image/png")
+    await cog(bot).record([clip_channel.post(attachments=[video, image])])
+    await say(bot, general, "!clip", FakeUser())
+    assert [s.kwargs["file"].filename for s in general.sent] == ["funny.mp4"]
+
+
 async def test_clip_links_files_too_big_to_upload(
     bot: YKSBot, clip_channel: FakeChannel, general: FakeChannel
 ) -> None:
     huge = FakeAttachment("long.mp4", size=50 * 1024 * 1024)
-    await cog(bot).record([clip_channel.post(attachments=[huge])])
+    await cog(bot).record([clip_channel.post("too long", attachments=[huge])])
     await say(bot, general, "!clip", FakeUser())
     assert [s.content for s in general.sent] == [huge.url]
 
@@ -146,7 +168,38 @@ async def test_clip_skips_deleted_messages(
     for _ in range(4):  # whichever is picked first, we end up posting the surviving clip
         general.sent.clear()
         await say(bot, general, "!clip", FakeUser())
-        assert [s.kwargs["file"].filename for s in general.sent] == ["kept.mp4"]
+        assert [s.kwargs["forward"] for s in general.sent] == [kept]
+
+
+async def test_random_clip_picks_live_clips_uniformly(db: Database) -> None:
+    import random
+
+    from yks.db.clips import NewClip, mark_messages_deleted, random_clip, record_clips
+
+    def new(message_id: int) -> NewClip:
+        return NewClip(1, 2, message_id, message_id, None, "c.mp4", "video/mp4", "https://x")
+
+    async with db.session() as session:
+        await record_clips(session, [new(m) for m in range(1, 41)])
+        # Delete a long run in the middle: a live clip right after a gap must not be favoured.
+        await mark_messages_deleted(session, range(5, 36))
+    rng = random.Random(1)
+    picks: dict[int, int] = {}
+    for _ in range(900):
+        async with db.session() as session:
+            clip = await random_clip(session, rng)
+        assert clip is not None and not clip.deleted
+        picks[clip.message_id] = picks.get(clip.message_id, 0) + 1
+    assert set(picks) == {1, 2, 3, 4, 36, 37, 38, 39, 40}
+    assert max(picks.values()) < 2 * min(picks.values())  # ~100 each, none ~30x as likely
+
+    async with db.session() as session:  # nearly everything deleted: the fallback finds it
+        await mark_messages_deleted(session, [1, 2, 3, 4, 36, 37, 38, 39])
+    async with db.session() as session:
+        assert (await random_clip(session, rng)).message_id == 40
+        await mark_messages_deleted(session, [40])
+    async with db.session() as session:
+        assert await random_clip(session, rng) is None
 
 
 async def test_clip_with_no_clips_says_nothing(bot: YKSBot, general: FakeChannel) -> None:

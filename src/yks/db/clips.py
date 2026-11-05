@@ -6,6 +6,7 @@ rows start as `pending` and the database trigger notifies the worker.
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -42,7 +43,32 @@ async def record_clips(session: AsyncSession, clips: Iterable[NewClip]) -> int:
     return len((await session.scalars(stmt)).all())
 
 
-async def random_clip(session: AsyncSession) -> Clip | None:
+# Random ids tried per query by `random_clip` before it falls back to sorting the whole table.
+RANDOM_ID_TRIES = 25
+
+
+async def random_clip(session: AsyncSession, rng: random.Random | None = None) -> Clip | None:
+    """A uniformly random clip that isn't deleted.
+
+    `ORDER BY random()` reads and sorts every row. Instead, guess random ids between the lowest
+    and highest and take the first guess that is a live clip (rejection sampling, so every clip is
+    equally likely despite gaps in the ids). The lookups use the primary key. Only if no guess
+    hits, e.g. when most clips are deleted, fall back to the full sort.
+    """
+    rng = rng or random.Random()
+    low, high = (await session.execute(select(func.min(Clip.id), func.max(Clip.id)))).one()
+    if low is None:
+        return None
+    guesses = [rng.randint(low, high) for _ in range(RANDOM_ID_TRIES)]
+    hits = {
+        clip.id: clip
+        for clip in await session.scalars(
+            select(Clip).where(Clip.id.in_(set(guesses)), Clip.deleted.is_(False))
+        )
+    }
+    for guess in guesses:  # the first hit in guess order (not the lowest id) keeps it uniform
+        if guess in hits:
+            return hits[guess]
     return await session.scalar(
         select(Clip).where(Clip.deleted.is_(False)).order_by(func.random()).limit(1)
     )

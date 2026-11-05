@@ -202,6 +202,10 @@ class FakeMessage:
     async def delete(self) -> None:
         self.deleted = True
 
+    async def forward(self, destination: Any) -> Any:
+        """Recorded in the destination's `sent` as `Sent(None, {"forward": <this message>})`."""
+        return await destination.send(forward=self)
+
     @property
     def jump_url(self) -> str:
         guild = self.guild.id if self.guild else "@me"

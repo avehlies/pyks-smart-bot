@@ -29,7 +29,7 @@ Set `WHISPER_IDLE_UNLOAD_SECONDS=0` to keep the model loaded all the time (faste
 | `WHISPER_MODEL` | `tiny.en` | Any faster-whisper model (`base.en`, `small.en`, `large-v3`, …). Downloaded on first use into `HF_HOME` (`/models` in Docker). |
 | `WHISPER_DEVICE` | `cpu` | `cuda` for a GPU. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` on a GPU. |
-| `WHISPER_BEAM_SIZE` | `5` | |
+| `WHISPER_BEAM_SIZE` | `3` | Lower is faster on a CPU (`1` is greedy decoding), higher is slightly more accurate (`5` is faster-whisper's usual default). |
 | `WHISPER_IDLE_UNLOAD_SECONDS` | `300` | Stop the model's process after this long with no clips. `0` keeps it loaded. |
 | `MAX_ATTEMPTS` | `3` | |
 | `POLL_INTERVAL_SECONDS` | `60` | |
