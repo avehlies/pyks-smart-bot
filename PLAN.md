@@ -22,11 +22,11 @@ Port of [`avehlies/yks-smart-bot`](https://github.com/avehlies/yks-smart-bot) (T
 pyks-smart-bot/
   pyproject.toml            # the bot package + uv workspace root
   docker-compose.yml        # postgres, bot, clip-worker
-  Dockerfile                # the bot image
+  Dockerfile                # both images (targets `bot` and `clip-worker`)
   alembic.ini
   migrations/
   assets/                   # images copied from the TS repo (only the ones still used)
-  clip-worker/              # transcription sidecar: own pyproject, Dockerfile, tests
+  clip-worker/              # transcription sidecar: own pyproject and tests
   src/yks/
     config.py               # pydantic-settings, reads .env
     log.py
@@ -93,7 +93,7 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `POST /api/share-clip` (Basic auth with `BOT_AUTH_USERNAME`/`BOT_AUTH_PASSWORD`; JSON `userId`, `page`, `url`) posts to the clip channel and returns a proper status. `GET /healthz` is used by the Docker healthcheck.
 
 ### Phase 6 — Clip worker sidecar ✅
-- A **separate application** in `clip-worker/` (package `yks_clip_worker`, a uv workspace member). It has its own Dockerfile, its own compose service, and its own dependencies (asyncpg, httpx, faster-whisper). It imports no bot code and talks to the `clips` table with SQL; the bot has no transcription code or settings at all.
+- A **separate application** in `clip-worker/` (package `yks_clip_worker`, a uv workspace member). It has its own image (the `clip-worker` target of the shared Dockerfile), its own compose service, and its own dependencies (asyncpg, httpx, faster-whisper). It imports no bot code and talks to the `clips` table with SQL; the bot has no transcription code or settings at all.
 - A loop that waits on `LISTEN clips_new` (with a polling fallback), claims the newest pending clip with `SKIP LOCKED`, and puts stuck `processing` jobs back after a timeout (or right away on SIGTERM).
 - **Refreshes the attachment URL through the Discord REST API before downloading**, since stored CDN links expire. Deleted messages are marked `skipped`.
 - Pipeline: download (httpx, streamed to a temp dir, size-capped) → faster-whisper (decodes audio and video via PyAV; VAD filter; `tiny.en` by default) → save the transcript. Retries back off (new `retry_at` column) and end in `failed` with `last_error`.

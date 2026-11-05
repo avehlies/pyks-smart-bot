@@ -1,6 +1,40 @@
 # Plan: one Dockerfile, shared stages, two images
 
-Status: **proposal, not implemented**. No Dockerfile, compose or CI changes yet.
+Status: **implemented, with one change from the proposal below** (see "Outcome"). The proposal is
+kept as written for the record.
+
+## Outcome
+
+The proposed layout builds each venv in a shared builder stage and copies it into the final stage.
+It was measured, and turned out **slower** than `main` after a lockfile change: every change re-copies
+a ~500 MB venv between stages. The root `Dockerfile` instead has each final stage (`bot`,
+`clip-worker`) sync its own venv in place. They share `runtime-base`, the `uv` stage (mounted in the
+worker, copied into the bot) and the uv download cache mount. Everything else (compose targets, the CI
+matrix with `target:` and cross-read caches, the extra bot check, the worker dropping uv,
+`.dockerignore`) is as proposed. Compose still builds the bot image for both `migrate` and `bot`, but
+the second build is a full cache hit and both use one tag (`yks-bot:local`). `build:` stays on
+`migrate` so `docker compose up migrate` works on a fresh machine.
+
+Local measurements (Docker 28, both images built one after the other, single runs, so expect a few
+seconds of noise):
+
+| Scenario | `main` | Shared builder + venv copy | **Final (in-place sync)** |
+| --- | --- | --- | --- |
+| Rebuild after `uv.lock` change | 80–85 s | 95–100 s | **57 s** |
+| Rebuild after code-only change | 17–24 s | 10 s | **11 s** |
+| Image size: bot | 845 MB | 753 MB | **755 MB** |
+| Image size: clip worker | 1.07 GB | 579 MB | **582 MB** |
+
+The size drop is mostly the uv cache: the old Dockerfiles left `/root/.cache/uv` in the image
+(419 MB in the worker image). The cache mount keeps it out. The worker also loses the uv binary.
+Cold builds with `--no-cache` were about the same on both (~3 min for both images), since that time
+is mostly downloads and bytecode compilation.
+
+Verified on the final images: both CI check commands pass. `alembic upgrade head` runs against a
+throwaway Postgres. The bot finds `/app/assets`, `ffmpeg` and `uv`, and
+`uv run --no-sync --with "pymongo>=4.10" yks-import-mongo --help` works. The worker runs as `worker`,
+owns `/models`, has no uv, and starts (exits on the missing `AUTH_TOKEN`, as expected).
+`docker compose config` and `docker compose build` succeed.
 
 ## Where we are
 
