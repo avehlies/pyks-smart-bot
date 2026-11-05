@@ -27,12 +27,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      - name: Install dependencies (bot and clip worker)
-        run: uv sync --locked --all-packages
+      # Only the dev group (Ruff at its locked version): linting doesn't need the bot's or the
+      # worker's dependencies, and skipping faster-whisper & co. saves most of the job's time.
+      - name: Install dev tools
+        run: uv sync --locked --only-dev
       - name: Ruff lint
-        run: uv run ruff check --output-format=github .
+        run: uv run --no-sync ruff check --output-format=github .
       - name: Ruff format
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
 
   test:
     name: Tests

@@ -249,15 +249,15 @@ SIMPLE_COMMANDS: tuple[SimpleCommand, ...] = (
             tuple(
                 File(f"staysippin/{name}")
                 for name in (
-                    "8chbein.png",
+                    "8chbein.jpg",
                     "adhd_md.jpg",
                     "heycraisins.jpg",
                     "jf.jpg",
-                    "jf-nyc.png",
+                    "jf-nyc.jpg",
                     "jf-time-magazine.jpg",
                     "kristin.jpg",
                     "mrs-craisins.jpg",
-                    "YoungOnion.png",
+                    "YoungOnion.jpg",
                 )
             )
         ),
@@ -279,7 +279,7 @@ SIMPLE_COMMANDS: tuple[SimpleCommand, ...] = (
         guild_gate_ms=MINUTE,
         response=RandomFile(
             tuple(
-                File(path) for path in ("mug1.png", "mug2.jpg", "mug3.png", "mug4.jpg", "mug5.jpg")
+                File(path) for path in ("mug1.jpg", "mug2.jpg", "mug3.jpg", "mug4.jpg", "mug5.jpg")
             )
         ),
         require_guild=True,

@@ -165,7 +165,10 @@ class FeedClient:
             cached = self._cache.get(url)
             if cached and self._clock() - cached[0] < self._ttl:
                 return cached[1]
-            feed = parse_feed(await self._fetch(url))
+            data = await self._fetch(url)
+            # feedparser is pure Python: a long feed can take a noticeable time to parse, which
+            # would stall the bot's event loop (heartbeats, every other command) if done inline.
+            feed = await asyncio.to_thread(parse_feed, data)
             self._cache[url] = (self._clock(), feed)
             return feed
 
