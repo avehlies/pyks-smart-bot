@@ -170,6 +170,12 @@ SIMPLE_COMMANDS: tuple[SimpleCommand, ...] = (
         response=Text("https://ghostbongo.bigcartel.com"),
     ),
     SimpleCommand(
+        id="bingo",
+        aliases=("bingo", "yksbingo"),
+        cooldown_ms=MINUTE,
+        response=Text("https://yksbingo.com"),
+    ),
+    SimpleCommand(
         id="bo",
         aliases=("bo",),
         cooldown_ms=HOUR,
