@@ -11,11 +11,12 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.40",
     "asyncpg>=0.30",
     "alembic>=1.16",
-    "aiohttp>=3.11",
+    "aiohttp>=3.13",
     "httpx>=0.28",
     "feedparser>=6.0.11",
     "pillow>=11",
     "tzdata>=2025.2", # zoneinfo data on Windows
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]

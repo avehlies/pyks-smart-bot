@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Status{% endblock %}
+{% block content %}
+<h1>Status</h1>
+<div class="grid">
+  <section class="card">
+    <h2>Discord</h2>
+    <dl>
+      <dt>Connection</dt>
+      <dd>{% if ready %}<span class="badge ok">ready</span>{% else %}<span class="badge bad">not ready</span>{% endif %}</dd>
+      <dt>Signed in as</dt><dd>{{ bot_user or "—" }}</dd>
+      <dt>Latency</dt><dd class="num">{{ "%.0f ms"|format(latency_ms) if latency_ms is not none else "—" }}</dd>
+      <dt>Up since</dt><dd>{{ started|local(tz) }} <span class="muted">({{ started|ago(now) }})</span></dd>
+      <dt>Servers</dt><dd>{% for g in guilds %}{{ g.name }} <span class="muted small">({{ g.member_count or "?" }} members)</span>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</dd>
+      <dt>Cogs</dt><dd class="small">{{ cogs|join(", ") }}</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>Clip transcription</h2>
+    <div class="stats" style="margin-bottom:12px">
+      {% for name in ["pending", "processing", "done", "failed"] %}
+      <a class="stat" href="{{ root }}/clips?status={{ name }}"><b>{{ stats.by_status[name] }}</b><span>{{ name }}</span></a>
+      {% endfor %}
+    </div>
+    <dl>
+      <dt>Oldest waiting</dt>
+      <dd>{% if stats.oldest_ready %}{{ stats.oldest_ready|ago(now) }}{% else %}nothing waiting{% endif %}</dd>
+      <dt>Running for</dt>
+      <dd>{% if stats.oldest_processing %}{{ stats.oldest_processing|ago(now) }}{% else %}—{% endif %}</dd>
+      <dt>Last finished</dt><dd>{{ stats.last_transcribed|ago(now) }}</dd>
+      <dt>Skipped / hidden</dt><dd class="num">{{ stats.by_status["skipped"] }} / {{ stats.deleted }}</dd>
+      <dt>Clip channel</dt><dd>{% if clip_channel %}#{{ clip_channel.name }}{% else %}<span class="badge bad">not found</span>{% endif %}</dd>
+    </dl>
+    {% if stats.oldest_ready and (now - stats.oldest_ready).total_seconds() > 900 and not stats.oldest_processing %}
+    <p class="small" style="color:var(--warn)">Clips have waited over 15 minutes and nothing is running. Is the clip-worker container up?</p>
+    {% endif %}
+    <div class="actions" style="margin-top:12px">
+      {% if stats.by_status["failed"] %}
+      <form method="post" action="{{ root }}/clips/retry-failed">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button>Retry {{ stats.by_status["failed"] }} failed</button>
+      </form>
+      {% endif %}
+      <form method="post" action="{{ root }}/backfill">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button {% if backfill_running %}disabled{% endif %} title="Walk the clip channel's history and record any clips the bot missed">
+          {{ "Backfill running…" if backfill_running else "Backfill clip history" }}
+        </button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <h2>Bot state</h2>
+  {% if state %}
+  <div class="scroll"><table>
+    <tr><th>Key</th><th>Value</th><th>Updated</th></tr>
+    {% for row in state %}
+    <tr><td class="small">{{ row.key }}</td><td>{{ row.value }}</td><td class="muted small">{{ row.updated_at|ago(now) }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">Nothing stored yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Recent log <span class="muted small">(newest first, since the bot started)</span></h2>
+  <div class="logs">
+    {% for line in logs %}
+    <div class="{{ line.level }}"><span class="muted">{{ (line.created|timestamp)|local(tz) }}</span> {{ line.level[:4] }} <span class="muted">{{ line.logger }}</span> {{ line.message }}</div>
+    {% else %}<p class="muted">No log lines yet.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

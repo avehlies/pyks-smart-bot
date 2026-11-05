@@ -69,6 +69,18 @@ class Settings(BaseSettings):
     bot_auth_username: str = ""
     bot_auth_password: str = ""
 
+    # Web admin panel (/admin), signed in with Discord OAuth2. Off until the secret and URL are set.
+    # Public base URL of this server (e.g. https://bot.example.com); the OAuth redirect is
+    # <ADMIN_BASE_URL>/admin/callback and must be added to the Discord application.
+    admin_base_url: str = ""
+    # OAuth2 client of the bot's Discord application. The ID defaults to the bot's application ID.
+    admin_client_id: OptionalId = None
+    admin_client_secret: str = ""
+    # Signs session cookies. If blank, a random one is made at startup (sign-ins end on restart).
+    admin_session_secret: str = ""
+    # Who may sign in, besides OWNER_ID and members with Manage Server in YKS_GUILD_ID.
+    admin_user_ids: Annotated[frozenset[int], NoDecode] = frozenset()
+
     # Local timezone for date-based behaviour ("today", Burgy day). The show is in Tennessee.
     bot_timezone: str = "America/Chicago"
     assets_dir: Path = DEFAULT_ASSETS_DIR
@@ -77,6 +89,10 @@ class Settings(BaseSettings):
     gather_all_clips: bool = False
 
     log_level: str = Field(default="INFO")
+
+    @property
+    def admin_enabled(self) -> bool:
+        return bool(self.admin_base_url and self.admin_client_secret)
 
     @property
     def tz(self) -> ZoneInfo:
@@ -98,7 +114,7 @@ class Settings(BaseSettings):
     def _normalize_db_url(cls, value: str) -> str:
         return normalize_database_url(value)
 
-    @field_validator("blocked_user_ids", mode="before")
+    @field_validator("blocked_user_ids", "admin_user_ids", mode="before")
     @classmethod
     def _parse_id_list(cls, value: Any) -> Any:
         if isinstance(value, str):

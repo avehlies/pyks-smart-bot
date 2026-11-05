@@ -14,7 +14,7 @@ All commands run on the server, from the repository folder, unless a step says o
 | --- | --- | --- |
 | `postgres` | The database: Postgres 17, data kept in the `pgdata` volume. Reachable only from the server itself (`127.0.0.1:5432`). | 50–100 MB |
 | `migrate` | Applies database migrations, then exits. Runs before the bot starts, every time. | — |
-| `bot` | The Discord bot, plus its HTTP API (`/api/share-clip`, `/healthz`) on `PORT`. | 100–150 MB, +50 MB during `!listen` |
+| `bot` | The Discord bot, plus its HTTP server on `PORT`: `/api/share-clip`, `/healthz` and the admin panel at `/admin` (Part 8). | 100–150 MB, +50 MB during `!listen` |
 | `clip-worker` | The separate transcription app. Its Whisper model loads only while there are clips to transcribe. | ~40–60 MB idle, ~200–350 MB while transcribing |
 
 ---
@@ -475,6 +475,9 @@ Anything that happened while the new bot was running isn't in MongoDB: new `!bes
 | `migrate` fails | Read `docker compose logs migrate`. It's usually the same password problem, or Postgres not being healthy yet; run `docker compose up -d migrate` again. |
 | `bind: address already in use` on port 3000 | Something else (often the old bot) is using `PORT`. Stop it, or set a different `PORT` in `.env`. |
 | `bot` shows `unhealthy` | `docker compose logs bot`. The HTTP API didn't start, or the process is stuck. `curl localhost:$PORT/healthz` on the server shows whether it's reachable. |
+| `/admin` says `503 … admin panel is off` | `ADMIN_BASE_URL` or `ADMIN_CLIENT_SECRET` isn't set (Part 8). |
+| Discord says `Invalid OAuth2 redirect_uri` | The redirect in the Developer Portal must be exactly `<ADMIN_BASE_URL>/admin/callback`. |
+| Signed in, but `… is not an admin of this bot` | Add your ID to `ADMIN_USER_IDS`, or check `OWNER_ID`. |
 | Import: `ServerSelectionTimeoutError` | The server can't reach MongoDB: check the Atlas IP access list (2.5), the host name, and the `mongodb+srv://` vs `mongodb://` form. |
 | Import: `Authentication failed` | Wrong user or password in `MONGO_URL`, a special character not percent-encoded, or `authSource=admin` missing for self-hosted. |
 | Import: `pymongo is needed` | You ran `yks-import-mongo` without `--with "pymongo>=4.10"`. Use the exact command from 3.3. |
@@ -486,3 +489,37 @@ Anything that happened while the new bot was running isn't in MongoDB: new `!bes
 | `!listen` says `Failed to join the voice channel` | The bot is missing Connect/Speak in that channel, or voice traffic is blocked. Voice uses UDP to Discord's voice servers, so the server must allow outbound UDP. |
 
 To get help, include `docker compose ps -a` and the last 100 lines of `docker compose logs <service>`.
+
+---
+
+## Part 8 — The web admin panel
+
+The bot serves an admin panel at `/admin` on the same port as the API:
+
+- **Status** (`/admin/`): the Discord connection, latency and servers; the clip transcription queue (waiting, running, done and failed counts, how long the oldest clip has waited, when the worker last finished one); stored bot state; and the last few hundred log lines.
+- **Clips** (`/admin/clips`): search transcripts, file names and errors, filter by status, and page through every clip. Each clip has a page where you can play it, open the Discord message, re-queue it for transcription, correct the transcript by hand, or hide it from `!clip` and `/findtheclimp`. "Retry failed" re-queues every failed clip at once.
+
+Sign-in is with Discord. The bot owner (`OWNER_ID`), anyone in `ADMIN_USER_IDS`, and members with **Manage Server** in `YKS_GUILD_ID` can get in. This is checked on every request, so taking away the permission locks someone out at once.
+
+### 8.1 Turn it on
+
+1. In the [Developer Portal](https://discord.com/developers/applications), open the bot's application → **OAuth2**. Copy the **Client Secret** (reset it if you've never seen it), and under **Redirects** add `<ADMIN_BASE_URL>/admin/callback`, e.g. `https://bot.example.com/admin/callback`.
+2. In `.env` set `ADMIN_BASE_URL`, `ADMIN_CLIENT_SECRET` and `ADMIN_SESSION_SECRET` (`openssl rand -hex 32`). Optionally set `ADMIN_USER_IDS`.
+3. `docker compose up -d bot`, then open `<ADMIN_BASE_URL>/admin/`.
+
+Until both `ADMIN_BASE_URL` and `ADMIN_CLIENT_SECRET` are set, `/admin` answers `503` and nothing else changes.
+
+### 8.2 Don't serve it over plain HTTP on the internet
+
+`docker-compose.yml` publishes `PORT` on every interface, and the bot serves plain HTTP. The session cookie would cross the network unencrypted. Pick one of these:
+
+- **Just for you:** bind the port to the server itself (`"127.0.0.1:${PORT:-3000}:3000"` in `docker-compose.yml`) and use an SSH tunnel: `ssh -L 3000:localhost:3000 <server>`. Then set `ADMIN_BASE_URL=http://localhost:3000` and add `http://localhost:3000/admin/callback` as the redirect.
+- **From anywhere:** put a TLS reverse proxy in front. With Caddy, this is the whole config and it gets the certificate itself:
+
+  ```
+  bot.example.com {
+      reverse_proxy localhost:3000
+  }
+  ```
+
+  Set `ADMIN_BASE_URL=https://bot.example.com`. With an `https://` base URL the session cookie is marked `Secure`.

@@ -1,4 +1,5 @@
-"""HTTP API served by the bot: `POST /api/share-clip` (used by im-at.work) and `GET /healthz`."""
+"""HTTP server in the bot: `POST /api/share-clip` (used by im-at.work), `GET /healthz`, and the
+web admin panel under `/admin` (see `yks.bot.admin`)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from urllib.parse import quote, urlparse
 import discord
 from aiohttp import web
 
+from yks.bot.admin import build_admin_app
 from yks.bot.media import download_payload
 
 if TYPE_CHECKING:
@@ -85,11 +87,17 @@ async def healthz(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "discord": bot.is_ready()})
 
 
+async def admin_redirect(request: web.Request) -> web.Response:
+    raise web.HTTPFound("/admin/")
+
+
 def build_app(bot: YKSBot) -> web.Application:
     app = web.Application(client_max_size=64 * 1024)
     app[BOT_KEY] = bot
     app.router.add_post("/api/share-clip", share_clip)
     app.router.add_get("/healthz", healthz)
+    app.router.add_get("/admin", admin_redirect)
+    app.add_subapp("/admin", build_admin_app(bot))
     return app
 
 

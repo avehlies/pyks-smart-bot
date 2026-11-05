@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Admin{% endblock %} · YKS Smart Bot</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc;
+  --accent: #4b56d2; --ok: #1f8a4c; --warn: #b26b00; --bad: #c0362c; --chip: #efeee9;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --panel: #1f1f1d; --text: #ecebe6; --muted: #9a9993; --line: #33322f;
+    --accent: #8f97ff; --ok: #4cc47f; --warn: #e5a443; --bad: #ff6f61; --chip: #2a2a27; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { display: flex; align-items: center; gap: 20px; padding: 10px 24px;
+  background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header .brand { font-weight: 650; }
+header nav { display: flex; gap: 14px; flex: 1; }
+header nav a { color: var(--muted); }
+header nav a.on { color: var(--text); font-weight: 600; }
+header .who { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+header .who img { width: 24px; height: 24px; border-radius: 50%; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 22px; margin: 4px 0 16px; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; margin-bottom: 16px; min-width: 0; }
+.grid .card { margin-bottom: 0; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; }
+tr:last-child td { border-bottom: 0; }
+.scroll { overflow-x: auto; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+  background: var(--chip); white-space: nowrap; }
+.badge.done, .badge.ok { color: var(--ok); }
+.badge.pending, .badge.processing { color: var(--warn); }
+.badge.failed, .badge.bad { color: var(--bad); }
+.badge.skipped { color: var(--muted); }
+.stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.stat { flex: 1; min-width: 100px; padding: 10px 12px; border-radius: 8px; background: var(--chip);
+  color: inherit; }
+.stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 13px; }
+a.stat:hover { text-decoration: none; outline: 2px solid var(--accent); }
+form.inline { display: inline; }
+button, .button { font: inherit; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--bad); }
+input, select, textarea { font: inherit; padding: 6px 8px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+textarea { width: 100%; min-height: 180px; resize: vertical; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.filters input[type=search] { flex: 1; min-width: 200px; }
+.flash { background: var(--chip); border-left: 3px solid var(--accent); padding: 8px 12px;
+  border-radius: 6px; margin-bottom: 16px; }
+.snippet { max-width: 520px; overflow-wrap: anywhere; }
+.logs { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 420px;
+  overflow: auto; }
+.logs div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1px 0; }
+.logs .WARNING { color: var(--warn); }
+.logs .ERROR, .logs .CRITICAL { color: var(--bad); }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+audio { width: 100%; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">YKS Smart Bot</span>
+  <nav>
+    <a href="{{ root }}/" {% if path == root ~ '/' %}class="on"{% endif %}>Status</a>
+    <a href="{{ root }}/clips" {% if path.startswith(root ~ '/clips') %}class="on"{% endif %}>Clips</a>
+  </nav>
+  {% if user %}
+  <span class="who">
+    {% if user.avatar_url %}<img src="{{ user.avatar_url }}" alt="">{% endif %}
+    {{ user.name }}
+    <form class="inline" method="post" action="{{ root }}/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button>Sign out</button>
+    </form>
+  </span>
+  {% endif %}
+</header>
+<main>
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
