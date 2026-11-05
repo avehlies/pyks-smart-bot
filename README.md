@@ -86,7 +86,7 @@ src/yks/
     episodes.py         embeds for !latest, !today and new-episode announcements
     cogs/               one module per feature
 assets/                 images the bot posts, plus the bundled DejaVu Sans font
-clip-worker/            the transcription sidecar (own package, Dockerfile, tests)
+clip-worker/            the transcription sidecar (own package and tests)
 migrations/             Alembic migrations
 tests/                  data/ holds sample RSS feeds used by the tests
 ```

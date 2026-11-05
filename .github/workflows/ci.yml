@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  PYTHON_VERSION: "3.12" # keep in sync with the Dockerfile base image
+  PYTHON_VERSION: "3.12" # keep in sync with PYTHON_VERSION in the Dockerfile
 
 jobs:
   lint:
@@ -78,10 +78,10 @@ jobs:
       matrix:
         include:
           - image: bot
-            dockerfile: Dockerfile
-            check: python -c "import yks.bot.client; import importlib.util as u; assert u.find_spec('yks_clip_worker') is None and u.find_spec('faster_whisper') is None"
+            other: clip-worker
+            check: python -c "import yks.bot.client, pathlib; import importlib.util as u; assert u.find_spec('yks_clip_worker') is None and u.find_spec('faster_whisper') is None and not pathlib.Path('/app/clip-worker/src').exists()"
           - image: clip-worker
-            dockerfile: clip-worker/Dockerfile
+            other: bot
             check: python -c "import yks_clip_worker.worker, faster_whisper; import importlib.util as u; assert u.find_spec('discord') is None and u.find_spec('yks') is None"
     steps:
       - uses: actions/checkout@v7
@@ -90,11 +90,15 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: Dockerfile
+          target: ${{ matrix.image }}
           push: false
           load: true
           tags: yks-${{ matrix.image }}:ci
-          cache-from: type=gha,scope=${{ matrix.image }}
+          # Read both images' caches: the shared stages can come from either.
+          cache-from: |
+            type=gha,scope=${{ matrix.image }}
+            type=gha,scope=${{ matrix.other }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       - name: Check the image contains only its own application
         run: docker run --rm yks-${{ matrix.image }}:ci ${{ matrix.check }}

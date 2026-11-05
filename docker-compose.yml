@@ -1,5 +1,9 @@
 x-app: &app
-  build: .
+  # migrate and bot run the same image, built once.
+  image: yks-bot:local
+  build:
+    context: .
+    target: bot
   env_file:
     - path: .env
       required: false
@@ -53,9 +57,10 @@ services:
 
   # Sidecar: transcribes clips the bot records (separate image, no bot code).
   clip-worker:
+    image: yks-clip-worker:local
     build:
       context: .
-      dockerfile: clip-worker/Dockerfile
+      target: clip-worker
     env_file:
       - path: .env
         required: false
