@@ -64,10 +64,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://yks:yks@localhost:5432/yks"
 
-    # HTTP API (/api/share-clip)
+    # HTTP server (/healthz)
     port: int = 3000
-    bot_auth_username: str = ""
-    bot_auth_password: str = ""
 
     # Local timezone for date-based behaviour ("today", Burgy day). The show is in Tennessee.
     bot_timezone: str = "America/Chicago"
