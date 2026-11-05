@@ -24,3 +24,7 @@ async def set_state(session: AsyncSession, key: str, value: str) -> None:
         .on_conflict_do_update(index_elements=[BotState.key], set_={"value": value})
     )
     await session.execute(stmt)
+
+
+async def get_all_state(session: AsyncSession) -> list[BotState]:
+    return list((await session.scalars(select(BotState).order_by(BotState.key))).all())

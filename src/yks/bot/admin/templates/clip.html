@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Clip {{ clip.id }}{% endblock %}
+{% block content %}
+<p class="small"><a href="{{ root }}/clips">← All clips</a></p>
+<h1 style="overflow-wrap:anywhere">{{ clip.filename }} <span class="badge {{ clip.status.value }}">{{ clip.status.value }}</span>{% if clip.deleted %} <span class="badge">hidden</span>{% endif %}</h1>
+<div class="grid">
+  <section class="card">
+    <h2>Clip</h2>
+    <audio controls preload="none" src="{{ root }}/clips/{{ clip.id }}/media"></audio>
+    <dl>
+      <dt>ID</dt><dd class="num">{{ clip.id }}</dd>
+      <dt>Posted by</dt><dd>{% if author %}{{ author.display_name }} <span class="muted small">({{ clip.author_id }})</span>{% else %}{{ clip.author_id or "—" }}{% endif %}</dd>
+      <dt>Posted</dt><dd>{{ (clip.posted_at or clip.created_at)|local(tz) }}</dd>
+      <dt>Recorded</dt><dd>{{ clip.created_at|local(tz) }}</dd>
+      <dt>Type</dt><dd>{{ clip.content_type or "—" }}</dd>
+      <dt>Discord</dt><dd><a href="{{ jump_url }}" target="_blank" rel="noopener">Open message ↗</a></dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>Transcription</h2>
+    <dl>
+      <dt>Attempts</dt><dd class="num">{{ clip.attempts }}</dd>
+      <dt>Transcribed</dt><dd>{{ clip.transcribed_at|local(tz) }}</dd>
+      {% if clip.retry_at %}<dt>Next try</dt><dd>{{ clip.retry_at|local(tz) }}</dd>{% endif %}
+      {% if clip.claimed_at %}<dt>Claimed</dt><dd>{{ clip.claimed_at|local(tz) }}</dd>{% endif %}
+      {% if clip.last_error %}<dt>Last error</dt><dd style="color:var(--bad)">{{ clip.last_error }}</dd>{% endif %}
+    </dl>
+    <div class="actions" style="margin-top:14px">
+      <form method="post" action="{{ root }}/clips/{{ clip.id }}/retry">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button {% if clip.status.value == "processing" %}disabled{% endif %}>Transcribe again</button>
+      </form>
+      <form method="post" action="{{ root }}/clips/{{ clip.id }}/deleted">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="deleted" value="{{ "0" if clip.deleted else "1" }}">
+        <button class="{{ '' if clip.deleted else 'danger' }}" title="Hidden clips are skipped by !clip and !findtheclimp. Discord is not changed.">
+          {{ "Restore" if clip.deleted else "Hide from !clip and search" }}
+        </button>
+      </form>
+    </div>
+  </section>
+</div>
+<section class="card" style="margin-top:16px">
+  <h2>Transcript</h2>
+  <form method="post" action="{{ root }}/clips/{{ clip.id }}/transcription">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <textarea name="transcription" placeholder="No transcript yet">{{ clip.transcription or "" }}</textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="primary" {% if clip.status.value == "processing" %}disabled{% endif %}>Save transcript</button>
+      <span class="muted small">Saving marks the clip as transcribed and makes it searchable.</span>
+    </div>
+  </form>
+</section>
+{% endblock %}

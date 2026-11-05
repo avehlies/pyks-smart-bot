@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Clips{% endblock %}
+{% block content %}
+<h1>Clips <span class="muted small num">{{ total }} matching</span></h1>
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ filters.query }}" placeholder="Search transcripts, file names, errors, or an ID">
+  <select name="status">
+    <option value="">Any status</option>
+    {% for s in statuses %}
+    <option value="{{ s.value }}" {% if filters.status == s %}selected{% endif %}>{{ s.value }} ({{ stats.by_status[s.value] }})</option>
+    {% endfor %}
+  </select>
+  <select name="deleted">
+    <option value="hide" {% if filters.deleted == "hide" %}selected{% endif %}>Visible clips</option>
+    <option value="only" {% if filters.deleted == "only" %}selected{% endif %}>Hidden only</option>
+    <option value="all" {% if filters.deleted == "all" %}selected{% endif %}>Visible and hidden</option>
+  </select>
+  <button class="primary">Filter</button>
+</form>
+{% if filters.status and filters.status.value == "failed" and total %}
+<form method="post" action="{{ root }}/clips/retry-failed" style="margin-bottom:14px">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button>Retry all {{ stats.by_status["failed"] }} failed clips</button>
+</form>
+{% endif %}
+<div class="card scroll" style="padding:4px 8px">
+<table>
+  <tr><th>ID</th><th>File</th><th>Status</th><th>Posted</th><th>Transcript / error</th></tr>
+  {% for clip in clips %}
+  <tr>
+    <td class="num"><a href="{{ root }}/clips/{{ clip.id }}">{{ clip.id }}</a></td>
+    <td class="small" style="overflow-wrap:anywhere">{{ clip.filename }}{% if clip.deleted %} <span class="badge">hidden</span>{% endif %}</td>
+    <td><span class="badge {{ clip.status.value }}">{{ clip.status.value }}</span>{% if clip.attempts %} <span class="muted small">×{{ clip.attempts }}</span>{% endif %}</td>
+    <td class="muted small" style="white-space:nowrap">{{ (clip.posted_at or clip.created_at)|local(tz) }}</td>
+    <td class="small snippet">
+      {% if clip.last_error and clip.status.value != "done" %}<span style="color:var(--bad)">{{ clip.last_error|truncate(140) }}</span>
+      {% elif clip.transcription %}{{ clip.transcription|truncate(160) }}
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No clips match.</td></tr>
+  {% endfor %}
+</table>
+</div>
+<div class="pager">
+  {% if page > 1 %}<a href="{{ page_url(page - 1) }}">← Newer</a>{% endif %}
+  <span class="muted small">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="{{ page_url(page + 1) }}">Older →</a>{% endif %}
+</div>
+{% endblock %}
