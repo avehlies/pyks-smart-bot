@@ -12,7 +12,7 @@ Port of [`avehlies/yks-smart-bot`](https://github.com/avehlies/yks-smart-bot) (T
 | Clip pipeline | A **separate `clip-worker` application** (its own package, image and container) downloads, transcribes and indexes clips. The bot records clips, backfills history and serves `!clip` / `/findtheclimp`, but contains nothing related to transcription. They coordinate through Postgres: a job-status column, `FOR UPDATE SKIP LOCKED`, and `LISTEN/NOTIFY` for instant pickup. |
 | Transcription | `faster-whisper` (`tiny.en` by default, configurable), in the separate clip-worker application. Replaces `@xenova/transformers`. |
 | Search | Postgres full-text search: a generated `tsvector` column + GIN index, queried with `websearch_to_tsquery` + `ts_rank`. |
-| HTTP | `aiohttp` web server inside the bot process (it needs the gateway client to post). Only `/api/share-clip` is ported. |
+| HTTP | `aiohttp` web server inside the bot process. It only serves `/healthz`; `/api/share-clip` was dropped. |
 | Dropped (backlog) | `!kickstarter`, `!realorfake`, `!cassie` (already commented out), `!episode` (its OpenAI curie fine-tune was retired), the React/static site, the `sessions` collection. |
 | Tooling | Python 3.12, `uv`, `ruff`, `pytest` (+ `pytest-asyncio`), Docker + docker-compose (`postgres`, `bot`, `clip-worker`). |
 
@@ -35,7 +35,7 @@ pyks-smart-bot/
     bot/
       __main__.py  client.py
       checks.py             # per-user cooldowns + per-guild "global rate" gate
-      web.py                # /api/share-clip
+      web.py                # /healthz
       cogs/                 # one module per feature (below)
   scripts/migrate_from_mongo.py
   tests/
@@ -90,7 +90,7 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - `on_message` in the clip channel records a `pending` row per audio/video attachment (skipping the bot itself and user `789204496097214514`). The database trigger sends `NOTIFY clips_new` for the worker. Deleting a message flags its clips `deleted`.
 - `!clip` / `!climp` (and `!clips`, `!randomclip`, `!climps`, `!randomclimp`): picks a random clip, fetches its message from the clip channel, and re-uploads the attachment. Files too big for the bot to upload are posted as a link. Deleted messages are flagged and another clip is picked.
 - History backfill lives in the bot (recording clips is a bot job): `GATHER_ALL_CLIPS=true` on startup, as before, or the owner-only `!backfillclips`.
-- `POST /api/share-clip` (Basic auth with `BOT_AUTH_USERNAME`/`BOT_AUTH_PASSWORD`; JSON `userId`, `page`, `url`) posts to the clip channel and returns a proper status. `GET /healthz` is used by the Docker healthcheck.
+- `GET /healthz` is used by the Docker healthcheck. The old `POST /api/share-clip` endpoint is not ported.
 
 ### Phase 6 — Clip worker sidecar ✅
 - A **separate application** in `clip-worker/` (package `yks_clip_worker`, a uv workspace member). It has its own image (the `clip-worker` target of the shared Dockerfile), its own compose service, and its own dependencies (asyncpg, httpx, faster-whisper). It imports no bot code and talks to the `clips` table with SQL; the bot has no transcription code or settings at all.
@@ -131,7 +131,6 @@ Each phase ends with something runnable that can be tested on a test guild befor
 - The kickstarter reaction listener crashes on messages without embeds.
 - Each clip message keeps only its last attachment in the DB.
 - `!clip` fetched the clip's message from whatever channel the command was used in, so it only worked inside the clip channel; it now always reads from the clip channel. It re-uploads only files the bot is allowed to upload and links bigger ones, and stops after 10 picks instead of making up to 100 blind fetches.
-- `/api/share-clip` never answered the HTTP request (callers hung until timeout); it now returns 200/400/401/502/503 JSON. Credentials are compared in constant time, and `userId` must be numeric (it's put into a mention).
 - Every slash command is deleted and re-registered on each startup. Commands are now synced on demand with `!sync`.
 - `/findtheclimp` fetched the clip's message from the channel the command was used in, so a clip could only be previewed and posted from inside the clip channel.
 - `/findtheclimp` found nothing for phrases made only of stop words; it now falls back to a substring match.
@@ -155,4 +154,4 @@ Each phase ends with something runnable that can be tested on a test guild befor
 
 ## Environment variables
 
-`AUTH_TOKEN`, `DATABASE_URL`, `YKS_GUILD_ID`, `YKS_CLIP_CHANNEL_ID`, `YKS_MAILBAG_CHANNEL_ID`, `YKS_KICKSTARTER_BOT_CHANNEL_ID`, `MAIN_FEED_RSS`, `BONUS_FEED_RSS`, `BOT_AUTH_USERNAME`, `BOT_AUTH_PASSWORD`, `PORT` (default 3000), `GATHER_ALL_CLIPS`, `BOT_TIMEZONE`, `MONGO_URL` (migration script only). Clip worker: `WHISPER_MODEL` (default `tiny.en`), `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `MAX_ATTEMPTS` (see `clip-worker/README.md`).
+`AUTH_TOKEN`, `DATABASE_URL`, `YKS_GUILD_ID`, `YKS_CLIP_CHANNEL_ID`, `YKS_MAILBAG_CHANNEL_ID`, `YKS_KICKSTARTER_BOT_CHANNEL_ID`, `MAIN_FEED_RSS`, `BONUS_FEED_RSS`, `PORT` (default 3000), `GATHER_ALL_CLIPS`, `BOT_TIMEZONE`, `MONGO_URL` (migration script only). Clip worker: `WHISPER_MODEL` (default `tiny.en`), `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `MAX_ATTEMPTS` (see `clip-worker/README.md`).

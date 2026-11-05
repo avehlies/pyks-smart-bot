@@ -14,7 +14,7 @@ All commands run on the server, from the repository folder, unless a step says o
 | --- | --- | --- |
 | `postgres` | The database: Postgres 17, data kept in the `pgdata` volume. Reachable only from the server itself (`127.0.0.1:5432`). | 50–100 MB |
 | `migrate` | Applies database migrations, then exits. Runs before the bot starts, every time. | — |
-| `bot` | The Discord bot, plus its HTTP API (`/api/share-clip`, `/healthz`) on `PORT`. | 100–150 MB, +50 MB during `!listen` |
+| `bot` | The Discord bot, plus a `/healthz` endpoint on `PORT` for the Docker healthcheck. | 100–150 MB, +50 MB during `!listen` |
 | `clip-worker` | The separate transcription app. Its Whisper model loads only while there are clips to transcribe. | ~40–60 MB idle, ~200–350 MB while transcribing |
 
 ---
@@ -100,8 +100,7 @@ Most values carry over from the TypeScript bot's environment under the **same na
 | `YKS_FOOD_CHANNEL_ID` | The food channel's ID (`682325132127371341`), where recipe links get a nyetcook.ing reply | (new) |
 | `MAIN_FEED_RSS` | Main podcast feed URL | `MAIN_FEED_RSS` (same) |
 | `BONUS_FEED_RSS` | Patreon feed URL | `BONUS_FEED_RSS` (same) |
-| `BOT_AUTH_USERNAME` / `BOT_AUTH_PASSWORD` | Credentials for `/api/share-clip` | Same names. Keep the same values so the im-at.work site keeps working. |
-| `PORT` | Host port for the HTTP API | `PORT` (same) |
+| `PORT` | Host port for the `/healthz` endpoint | `PORT` (same) |
 | `POSTGRES_PASSWORD` | **A new, strong password** (see 2.3) | (new) |
 | `MONGO_URL` | Connection string for the old database, only for the import (see 2.4) | Built from `MONGO_HOST`, `MONGO_PORT`, `MONGO_USER`, `MONGO_PW`, `MONGO_DB` |
 | `BOT_TIMEZONE` | Timezone for `!today` and the April 7 Burgy-day rule. Default `America/Chicago`. | (the TS bot used the server clock) |
@@ -350,24 +349,12 @@ Use a member account that isn't the owner; the owner skips cooldowns, which can 
 | `!newmember <your user ID>` (as the owner) | Usually nothing: you've already been welcomed, and each member is only welcomed once per server. To see the welcome image, use the ID of a member who joined after the switch-over, or run it on a test server. |
 | `!welcome` twice (as a mod) | `Welcome message disabled.` then `Welcome message enabled.` (leave it enabled) |
 
-### 4.11 Re-point the im-at.work site
-
-The site posts shared clips to `POST http(s)://<this server>:<PORT>/api/share-clip`, or through a reverse proxy if you use one. If the new bot runs on a different server or port than the old one, update the site's setting. Keep the same `BOT_AUTH_USERNAME` / `BOT_AUTH_PASSWORD`.
-
-Test it from any machine:
+### 4.11 Check the healthcheck endpoint
 
 ```sh
 curl -i http://<this server>:<PORT>/healthz
 # {"ok": true, "discord": true}
-
-curl -i -u "$BOT_AUTH_USERNAME:$BOT_AUTH_PASSWORD" \
-  -H "Content-Type: application/json" \
-  -d '{"userId":"<your user ID>","page":"test","url":"https://<a small public .mp4 URL>"}' \
-  http://<this server>:<PORT>/api/share-clip
-# {"ok": true}, and the clip appears in the clip channel
 ```
-
-If the site was reaching the old bot over HTTPS, put the same reverse proxy (nginx, Caddy, …) in front of the new one. The bot itself serves plain HTTP.
 
 ### 4.12 Record clips posted while neither bot was online
 
@@ -456,7 +443,7 @@ MongoDB is never modified by any of this, so going back to the TypeScript bot is
 docker compose stop bot clip-worker
 ```
 
-Then start the TypeScript bot again (reverse step 4.4), and re-point the im-at.work site if you changed it in 4.11.
+Then start the TypeScript bot again (reverse step 4.4).
 
 Anything that happened while the new bot was running isn't in MongoDB: new `!best` votes, `:this:` tallies, welcomed members, new clips and their transcripts. If you switch over again later, repeat Part 4 from 4.4. Before the final import (4.5), **truncate the tables first**, so Postgres matches MongoDB exactly. Then run `!backfillclips` (4.12) to pick up clips posted in between.
 
