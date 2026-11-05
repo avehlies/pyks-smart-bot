@@ -22,9 +22,15 @@ class Triggers(commands.Cog):
         if not message.content:
             return
         # Akairo only checked regex commands when the message wasn't a valid prefix command.
-        ctx = await self.bot.get_context(message)
-        if ctx.valid:
-            return
+        # Most messages don't start with a prefix, so check that before building a full context
+        # (which discord.py's own command handling has to build for this message as well).
+        prefixes = await self.bot.get_prefix(message)
+        if isinstance(prefixes, str):
+            prefixes = [prefixes]
+        if message.content.startswith(tuple(prefixes)):
+            ctx = await self.bot.get_context(message)
+            if ctx.valid:
+                return
         await self.bot.triggers.dispatch(message, owner_id=self.bot.owner_id)
 
 

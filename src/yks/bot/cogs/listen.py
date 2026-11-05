@@ -41,6 +41,9 @@ PROGRESS_EVERY = 10.0  # seconds between embed updates
 MIN_PLAYED_MS = 2000  # shorter than this counts as "failed to start"
 STOP_CONFIRM_TIMEOUT = 10.0
 START_ACTIONS = ("play", "random", "url")
+# An episode is ~50-150 MB; refuse anything far bigger rather than fill the disk.
+MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+WRITE_BATCH_BYTES = 1024 * 1024
 
 
 def _emoji_key(emoji: Any) -> str:
@@ -224,9 +227,25 @@ class Listen(commands.Cog):
     async def _download(self, url: str, path: Path) -> None:
         async with self.bot.http_client.stream("GET", url, timeout=60.0) as response:
             response.raise_for_status()
+            if int(response.headers.get("content-length") or 0) > MAX_DOWNLOAD_BYTES:
+                raise ValueError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
+            written = 0
             with path.open("wb") as out:
+                # Write in a thread, a batch of chunks at a time, so a slow disk can't stall the
+                # event loop (which keeps the voice connection and every command running).
+                pending: list[bytes] = []
+                buffered = 0
                 async for chunk in response.aiter_bytes():
-                    out.write(chunk)
+                    written += len(chunk)
+                    if written > MAX_DOWNLOAD_BYTES:
+                        raise ValueError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
+                    pending.append(chunk)
+                    buffered += len(chunk)
+                    if buffered >= WRITE_BATCH_BYTES:
+                        await asyncio.to_thread(out.writelines, pending)
+                        pending, buffered = [], 0
+                if pending:
+                    await asyncio.to_thread(out.writelines, pending)
 
     def _embed(self, session: ListenSession, channel_name: str) -> discord.Embed:
         label, rest = title_fields(session.episode.title)

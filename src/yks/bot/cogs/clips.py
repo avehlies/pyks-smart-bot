@@ -128,8 +128,26 @@ class Clips(commands.Cog):
             )
             if attachment is None:  # the attachment was removed from the message
                 continue
+            if await self._forward(message, ctx.channel):
+                return
             await ctx.send(**await attachment_payload(attachment, ctx.guild))
             return
+
+    async def _forward(self, message: discord.Message, destination: Any) -> bool:
+        """Forward a message that is nothing but the one clip. Returns False if it wasn't.
+
+        Forwarding moves no data (re-posting downloads and re-uploads the file) and isn't limited
+        by the upload size. A forward carries the whole message, so a message with text or other
+        attachments is re-posted instead, to show only the picked clip.
+        """
+        if message.content or len(message.attachments) != 1:
+            return False
+        try:
+            await message.forward(destination)
+        except discord.HTTPException:
+            log.warning("Could not forward clip message %s; re-posting instead", message.id)
+            return False
+        return True
 
     # --- backfill -----------------------------------------------------------------------------
 

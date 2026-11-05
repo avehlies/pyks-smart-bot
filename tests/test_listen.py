@@ -132,6 +132,8 @@ async def bot(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[YKSBot]:
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).endswith("/broken.mp3"):
             return httpx.Response(500)
+        if str(request.url).endswith("/huge.mp3"):
+            return httpx.Response(200, headers={"content-length": str(2**40)}, content=AUDIO)
         return httpx.Response(200, content=AUDIO)
 
     await instance.http_client.aclose()
@@ -253,6 +255,16 @@ async def test_download_failure(
         "Could not download audio. Check bot logs.",
     ]
     assert not voice_channel.clients[0].connected
+    assert guild.id not in cog(bot).sessions
+
+
+async def test_download_refuses_huge_files(
+    bot: YKSBot, channel: FakeChannel, guild: FakeGuild, voice_channel: FakeVoiceChannel
+) -> None:
+    owner = FakeMember(id=bot.settings.owner_id, guild=guild)
+    owner.voice = SimpleNamespace(channel=voice_channel)  # type: ignore[attr-defined]
+    await say(bot, channel, "!listen url https://cdn.test/huge.mp3", owner)
+    assert contents(channel)[-1] == "Could not download audio. Check bot logs."
     assert guild.id not in cog(bot).sessions
 
 
