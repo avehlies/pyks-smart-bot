@@ -1,7 +1,8 @@
 """The "JF has blessed your timeline" welcome image (port of the node-canvas version).
 
 Layout on a transparent 1000x1000 canvas:
-* `jf-blessing.png` stretched into the left 423 px.
+* `jf-blessing.png` stretched into the left 423 px. (The asset is stored at 423x1000, so this is
+  normally a no-op; the resized copy is cached either way.)
 * The member's avatar in a 200 px circle centred at (550, 120).
 * A green multi-line message whose first baseline is at (450, 300). The font starts at 60 px and
   shrinks in 10 px steps until the widest line fits in 600 px; anything still wider than 550 px
@@ -38,6 +39,14 @@ def welcome_text(display_name: str) -> str:
 @lru_cache(maxsize=16)
 def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size)
+
+
+@lru_cache(maxsize=2)
+def _background(path: Path) -> Image.Image:
+    """The background, converted and sized for BACKGROUND_BOX. Cached: it's the same every time."""
+    left, top, right, bottom = BACKGROUND_BOX
+    with Image.open(path) as background:
+        return background.convert("RGBA").resize((right - left, bottom - top), Image.LANCZOS)
 
 
 def _widest_line(font: ImageFont.FreeTypeFont, text: str) -> float:
@@ -80,12 +89,7 @@ def render_welcome_image(
     """Build the welcome PNG and return its bytes."""
     canvas = Image.new("RGBA", CANVAS_SIZE, (0, 0, 0, 0))
 
-    left, top, right, bottom = BACKGROUND_BOX
-    with Image.open(background_path) as background:
-        canvas.alpha_composite(
-            background.convert("RGBA").resize((right - left, bottom - top), Image.LANCZOS),
-            (left, top),
-        )
+    canvas.alpha_composite(_background(background_path), BACKGROUND_BOX[:2])
 
     text = welcome_text(display_name)
     size = fit_font_size(text, font_path)
@@ -104,5 +108,5 @@ def render_welcome_image(
     canvas.alpha_composite(avatar, (left, top))
 
     out = io.BytesIO()
-    canvas.save(out, "PNG", optimize=True)
+    canvas.save(out, "PNG")  # optimize=True: ~2.5x slower for a ~1.5% smaller file
     return out.getvalue()

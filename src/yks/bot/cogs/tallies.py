@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -160,6 +163,20 @@ class Tallies(commands.Cog):
             log.warning("Could not fetch tallied message %s", tally.message_id)
         return None
 
+    async def _ranked_messages(
+        self, tallies: Sequence[ReactionTally]
+    ) -> AsyncIterator[discord.Message]:
+        """Yield the tallied messages that still exist, best first.
+
+        Fetches TOP_N at a time, concurrently, instead of one after another: a listing usually
+        needs one batch, so it costs about one Discord round trip rather than ten.
+        """
+        for start in range(0, len(tallies), TOP_N):
+            batch = tallies[start : start + TOP_N]
+            for message in await asyncio.gather(*(self._fetch_listed(t) for t in batch)):
+                if message is not None:
+                    yield message
+
     @commands.command(name="topmailbag", aliases=["topmail", "bestmailbag", "bestmail"])
     @commands.guild_only()
     @akairo_cooldown(HOUR)
@@ -169,17 +186,17 @@ class Tallies(commands.Cog):
         async with self.bot.db.session() as session:
             candidates = await top_tallies(session, TallyKind.MAILBAG, ctx.guild.id, since=since)
         embed = discord.Embed(color=GREEN, title="__Top Mailbag Messages (Last 30 Days)__\n")
-        for tally in candidates:
-            if len(embed.fields) == TOP_N:
-                break
-            message = await self._fetch_listed(tally)
-            if message is None or (self.bot.user and message.author.id == self.bot.user.id):
-                continue  # the bot's own posts don't count
-            embed.add_field(
-                name=f"{len(embed.fields) + 1}. From {message.author.name}",
-                value=ellipsis(f"[Jump to message]({message.jump_url})\n{message.content}"),
-                inline=False,
-            )
+        async with aclosing(self._ranked_messages(candidates)) as messages:
+            async for message in messages:
+                if self.bot.user and message.author.id == self.bot.user.id:
+                    continue  # the bot's own posts don't count
+                embed.add_field(
+                    name=f"{len(embed.fields) + 1}. From {message.author.name}",
+                    value=ellipsis(f"[Jump to message]({message.jump_url})\n{message.content}"),
+                    inline=False,
+                )
+                if len(embed.fields) == TOP_N:
+                    break
         if not embed.fields:
             await ctx.send("No mailbag messages with :this: reactions in the last 30 days.")
             return
@@ -193,21 +210,21 @@ class Tallies(commands.Cog):
         async with self.bot.db.session() as session:
             candidates = await top_tallies(session, TallyKind.KICKSTARTER, ctx.guild.id)
         entries: list[tuple[str, str]] = []
-        for tally in candidates:
-            if len(entries) == TOP_N:
-                break
-            message = await self._fetch_listed(tally)
-            if message is None or not message.embeds:
-                continue
-            generated = message.embeds[0]
-            entries.append(
-                (
-                    f"{len(entries) + 1}: {generated.title or 'Untitled'}"[:256],
-                    ellipsis(
-                        f"[Jump to message]({message.jump_url})\n{generated.description or ''}"
-                    ),
+        async with aclosing(self._ranked_messages(candidates)) as messages:
+            async for message in messages:
+                if not message.embeds:
+                    continue
+                generated = message.embeds[0]
+                entries.append(
+                    (
+                        f"{len(entries) + 1}: {generated.title or 'Untitled'}"[:256],
+                        ellipsis(
+                            f"[Jump to message]({message.jump_url})\n{generated.description or ''}"
+                        ),
+                    )
                 )
-            )
+                if len(entries) == TOP_N:
+                    break
         if not entries:
             return  # like the TS bot: nothing to show, no reply
         embed = discord.Embed(color=GREEN, title=f"__Top {len(entries)} Kickstarters__\n")
