@@ -237,7 +237,7 @@ class FindTheClimp(commands.Cog):
             return []
         timings.mark("search")
         choices = build_choices(clips, phrase)
-        log.info(
+        log.debug(
             "/%s autocomplete %r: %d choice(s) from %d clip(s): %s",
             COMMAND_NAME,
             phrase,
