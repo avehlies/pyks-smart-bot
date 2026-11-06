@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import discord
+import httpx
 import pytest
 from sqlalchemy import update
 
 from yks.bot.client import YKSBot
-from yks.bot.cogs.findtheclimp import NOT_A_CHOICE, PostClipView, SearchCache, snippet_around
+from yks.bot.cogs.findtheclimp import (
+    NOT_A_CHOICE,
+    PostClipView,
+    SearchCache,
+    Timings,
+    snippet_around,
+)
+from yks.bot.media import link_is_fresh
 from yks.config import Settings
 from yks.db import Clip, ClipStatus, Database
 from yks.db.clips import NewClip, prefix_tsquery_text, record_clips, search_clips
@@ -56,12 +68,38 @@ def clip_channel(guild: FakeGuild) -> FakeChannel:
     return FakeChannel(guild=guild, name="clips")
 
 
+class FakeCDN:
+    """Serves attachment bytes by URL: links of messages in the clip channel, plus `extra`."""
+
+    def __init__(self, channel: FakeChannel) -> None:
+        self.channel = channel
+        self.extra: dict[str, bytes] = {}
+        self.requests: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        self.requests.append(url)
+        if url in self.extra:
+            return httpx.Response(200, content=self.extra[url])
+        for message in self.channel.stored.values():
+            for attachment in message.attachments:
+                if attachment.url == url:
+                    return httpx.Response(200, content=attachment.data)
+        return httpx.Response(403)  # expired or unknown link
+
+
+@pytest.fixture
+def cdn(clip_channel: FakeChannel) -> FakeCDN:
+    return FakeCDN(clip_channel)
+
+
 @pytest.fixture
 async def bot(
     db: Database,
     database_url: str,
     guild: FakeGuild,
     clip_channel: FakeChannel,
+    cdn: FakeCDN,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[YKSBot]:
     patch_context_send(monkeypatch)
@@ -71,8 +109,14 @@ async def bot(
     instance = await make_bot(settings, db)
     instance.get_cog("Tallies").prune_mailbag.cancel()
     monkeypatch.setattr(instance, "get_channel", guild.get_channel)
+    await instance.http_client.aclose()
+    instance.http_client = httpx.AsyncClient(transport=httpx.MockTransport(cdn.handler))
     yield instance
     await instance.http_client.aclose()
+
+
+def signed_url(expires: float) -> str:
+    return f"https://cdn.discordapp.com/attachments/1/2/clip.mp4?ex={int(expires):x}&hm=abc"
 
 
 async def add_transcribed(
@@ -138,6 +182,61 @@ def test_search_cache_expires() -> None:
     assert cache.get(2, 5) is None
     now[0] = 11
     assert cache.get(1, 5) is None
+
+
+async def preview(bot: YKSBot, guild: FakeGuild, clip_id: int, user: FakeUser) -> Any:
+    """Run /findtheclimp for a clip; returns the interaction (its first edit is the preview)."""
+    interaction = FakeInteraction(user=user, guild=guild)
+    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    return interaction
+
+
+async def click_post(view: PostClipView, user: FakeUser, guild: FakeGuild) -> FakeInteraction:
+    click = FakeInteraction(user=user, guild=guild)
+    await view.post.callback(click)
+    return click
+
+
+async def test_command_uses_an_unexpired_stored_link_without_fetching(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack")
+    url = signed_url(time.time() + 86400)
+    cdn.extra[url] = b"stored link bytes"
+    async with db.session() as session:
+        await session.execute(update(Clip).where(Clip.id == clip_id).values(url=url))
+    clip_channel.stored.clear()  # fetching the message would fail
+    user = FakeUser()
+    interaction = await preview(bot, guild, clip_id, user)
+    assert interaction.edits[0]["content"] == url
+    await click_post(interaction.edits[0]["view"], user, guild)
+    (posted,) = clip_channel.sent
+    assert posted.file_bytes == [b"stored link bytes"]
+    assert cdn.requests == [url]
+
+
+async def test_command_refreshes_a_refused_stored_link(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
+) -> None:
+    clip_id, attachment = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
+    stale = signed_url(time.time() + 86400)  # looks valid, but the CDN refuses it
+    async with db.session() as session:
+        await session.execute(update(Clip).where(Clip.id == clip_id).values(url=stale))
+    user = FakeUser()
+    interaction = await preview(bot, guild, clip_id, user)
+    await click_post(interaction.edits[0]["view"], user, guild)
+    (posted,) = clip_channel.sent
+    assert posted.file_bytes == [b"jet"]
+    assert cdn.requests == [stale, attachment.url]
+    async with db.session() as session:
+        assert (await session.get(Clip, clip_id)).url == attachment.url  # remembered
+
+
+def test_link_is_fresh() -> None:
+    assert link_is_fresh(signed_url(2000), now=1000)
+    assert not link_is_fresh(signed_url(1500), now=1000)  # inside the 10 minute margin
+    assert not link_is_fresh("https://cdn.discordapp.com/a/b/c.mp4?ex=nothex", now=1000)
+    assert not link_is_fresh("https://cdn.discordapp.com/a/b/c.mp4", now=1000)
 
 
 # --- search ---------------------------------------------------------------------------------
@@ -208,20 +307,21 @@ async def test_autocomplete(
 # --- the command and its buttons ------------------------------------------------------------
 
 
-async def test_command_previews_privately(
-    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild
+async def test_command_previews_privately_as_a_link(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
 ) -> None:
-    clip_id, _ = await add_transcribed(db, clip_channel, "the self-folding sock", data=b"sock clip")
-    user = FakeUser()
-    interaction = FakeInteraction(user=user, guild=guild)
-    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    clip_id, attachment = await add_transcribed(db, clip_channel, "the self-folding sock")
+    interaction = await preview(bot, guild, clip_id, FakeUser())
     assert interaction.response.deferred == {"ephemeral": True, "thinking": True}
     (edit,) = interaction.edits
-    assert edit["file_bytes"] == [b"sock clip"]
+    assert edit["content"] == attachment.url  # Discord plays the link; nothing re-uploaded
+    assert "attachments" not in edit
     # (discord.py loads extensions as their own module objects, so compare by name)
     assert type(edit["view"]).__name__ == PostClipView.__name__
     labels = [item.label for item in edit["view"].children]
     assert labels == ["Post it", "Don't post it"]
+    await edit["view"].download  # the file for posting downloads in the background
+    assert cdn.requests == [attachment.url]
 
 
 @pytest.mark.parametrize("value", ["-", "jetpack"])
@@ -251,50 +351,106 @@ async def test_post_it_button(
     clip_id, _ = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
     user = FakeUser()
     cog(bot).search_cache.put(user.id, clip_id, "jetpack")
-    interaction = FakeInteraction(user=user, guild=guild)
-    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    interaction = await preview(bot, guild, clip_id, user)
     view: PostClipView = interaction.edits[0]["view"]
 
-    click = FakeInteraction(user=user, guild=guild)
-    assert await view.interaction_check(click)
+    assert await view.interaction_check(FakeInteraction(user=user, guild=guild))
     assert not await view.interaction_check(FakeInteraction(user=FakeUser(), guild=guild))
-    await view.post.callback(click)
-    assert click.response.edits == [{"content": "Posted.", "attachments": [], "view": None}]
+    click = await click_post(view, user, guild)
+    assert click.response.edits == [{"content": "Posting...", "view": None}]
+    assert click.edits == [{"content": "Posted."}]
     (posted,) = clip_channel.sent
     assert posted.kwargs["embed"].description == (
         f'Requested by {user.mention} using the `/findtheclimp` command for "jetpack".'
     )
     assert posted.file_bytes == [b"jet"]
     assert cog(bot).search_cache.get(user.id, clip_id) is None
-    assert view.media is None  # the downloaded file is let go
+    assert view.download is None  # the view lets go of the file
 
 
-async def test_post_it_reuses_the_preview_download(
-    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild
+async def test_post_it_uses_the_finished_background_download(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
 ) -> None:
     clip_id, _ = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
     user = FakeUser()
-    interaction = FakeInteraction(user=user, guild=guild)
-    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
-    clip_channel.stored.clear()  # posting must not need to fetch the message again
-    await interaction.edits[0]["view"].post.callback(FakeInteraction(user=user, guild=guild))
+    interaction = await preview(bot, guild, clip_id, user)
+    view = interaction.edits[0]["view"]
+    await view.download
+    clip_channel.stored.clear()  # posting needs neither the message nor the CDN any more
+    requests = len(cdn.requests)
+    await click_post(view, user, guild)
     (posted,) = clip_channel.sent
     assert posted.file_bytes == [b"jet"]
+    assert len(cdn.requests) == requests
 
 
-async def test_dont_post_it_button(
+async def test_post_it_when_the_clip_is_gone(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack")
+    url = signed_url(time.time() + 86400)  # unexpired, so the preview shows it as is...
+    async with db.session() as session:
+        await session.execute(update(Clip).where(Clip.id == clip_id).values(url=url))
+    clip_channel.stored.clear()  # ...but the message was deleted, so the CDN refuses it
+    user = FakeUser()
+    interaction = await preview(bot, guild, clip_id, user)
+    assert interaction.edits[0]["content"] == url
+    view = interaction.edits[0]["view"]
+    click = await click_post(view, user, guild)
+    assert click.edits == [{"content": "Couldn't post it: the clip seems to be gone."}]
+    assert clip_channel.sent == []
+    async with db.session() as session:
+        assert (await session.get(Clip, clip_id)).deleted is True
+
+
+async def test_dont_post_it_button_cancels_the_download(
     bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild
 ) -> None:
     clip_id, _ = await add_transcribed(db, clip_channel, "jetpack")
     user = FakeUser()
-    interaction = FakeInteraction(user=user, guild=guild)
-    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    interaction = await preview(bot, guild, clip_id, user)
+    view = interaction.edits[0]["view"]
+    download = view.download
     click = FakeInteraction(user=user, guild=guild)
-    await interaction.edits[0]["view"].reject.callback(click)
+    await view.reject.callback(click)
     assert click.response.edits == [
-        {"content": "Didn't post. Is that a first for you?", "attachments": [], "view": None}
+        {"content": "Didn't post. Is that a first for you?", "view": None}
     ]
+    with contextlib.suppress(asyncio.CancelledError):
+        await download
+    assert download.cancelled()
     assert clip_channel.sent == []
+
+
+def test_timings_report_each_step_and_the_total() -> None:
+    ticks = iter([0.0, 0.004, 0.184, 1.5])
+    timings = Timings(clock=lambda: next(ticks))
+    timings.mark("lookup")
+    timings.mark("fetch")
+    timings.mark("preview")
+    assert str(timings) == "lookup=4ms fetch=180ms preview=1316ms total=1500ms"
+
+
+async def test_preview_and_post_log_their_timings(
+    bot: YKSBot,
+    db: Database,
+    clip_channel: FakeChannel,
+    guild: FakeGuild,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
+    user = FakeUser()
+    with caplog.at_level(logging.INFO, logger="yks.bot.cogs.findtheclimp"):
+        interaction = await preview(bot, guild, clip_id, user)
+        await click_post(interaction.edits[0]["view"], user, guild)
+    lines = [r.getMessage() for r in caplog.records]
+    (shown,) = [line for line in lines if "preview of clip" in line]
+    for step in ("defer=", "lookup=", "fetch=", "preview=", "total="):
+        assert step in shown
+    (downloaded,) = [line for line in lines if "downloaded clip" in line]
+    assert "(3 bytes)" in downloaded and "download=" in downloaded
+    (posted,) = [line for line in lines if " posted " in line]
+    assert "wait=" in posted and "send=" in posted
 
 
 async def test_sync_is_owner_only(
