@@ -24,7 +24,7 @@ from yks.bot.listen import (
 )
 from yks.config import Settings
 from yks.db import Database
-from yks.feeds import FeedClient, parse_feed
+from yks.feeds import FeedClient, Fetched, parse_feed
 
 from .fakes import FakeAudio, FakeChannel, FakeGuild, FakeMember, FakeUser, FakeVoiceChannel
 from .harness import make_bot, patch_context_send, say
@@ -125,9 +125,9 @@ async def bot(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[YKSBot]:
     instance.get_cog("Feeds").watch_feeds.cancel()
     instance.get_cog("Tallies").prune_mailbag.cancel()
 
-    async def fetch(url: str) -> bytes:
+    async def fetch(url: str, previous: Fetched | None = None) -> Fetched:
         assert url == MAIN_URL
-        return (DATA / "main_feed.xml").read_bytes()
+        return Fetched((DATA / "main_feed.xml").read_bytes())
 
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).endswith("/broken.mp3"):

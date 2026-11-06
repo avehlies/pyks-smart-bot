@@ -241,6 +241,9 @@ class FakeAttachment:
     async def to_file(self) -> discord.File:
         return discord.File(io.BytesIO(self.data), filename=self.filename)
 
+    async def read(self) -> bytes:
+        return self.data
+
 
 @dataclass(eq=False)
 class FakeReaction:

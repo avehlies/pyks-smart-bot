@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
+import http.server
 import random
+import threading
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -19,7 +23,7 @@ from yks.bot.episodes import (
     latest_bonus_episode,
     this_day_embed,
 )
-from yks.feeds import FeedClient, FeedError, parse_feed
+from yks.feeds import FeedClient, FeedError, Fetched, fetch_url, parse_feed
 
 DATA = Path(__file__).parent / "data"
 CHICAGO = ZoneInfo("America/Chicago")
@@ -124,11 +128,11 @@ class Clock:
 async def test_feed_client_caches_and_expires() -> None:
     hits = 0
 
-    async def fetch(url: str) -> bytes:
+    async def fetch(url: str, previous: Fetched | None = None) -> Fetched:
         nonlocal hits
         hits += 1
         await asyncio.sleep(0)
-        return (DATA / "main_feed.xml").read_bytes()
+        return Fetched((DATA / "main_feed.xml").read_bytes())
 
     clock = Clock()
     client = FeedClient(fetch, ttl=15, clock=clock)
@@ -141,6 +145,74 @@ async def test_feed_client_caches_and_expires() -> None:
     clock.now = 16
     await client.get("https://feeds.test/main")
     assert hits == 2
+
+
+MODIFIED = "Thu, 05 Nov 2026 10:00:00 GMT"
+
+
+async def test_feed_client_revalidates_and_reuses_the_parse_on_304() -> None:
+    calls: list[Fetched | None] = []
+
+    async def fetch(url: str, previous: Fetched | None = None) -> Fetched:
+        calls.append(previous)
+        if previous is not None:
+            return Fetched(None, previous.etag, previous.last_modified)
+        return Fetched((DATA / "main_feed.xml").read_bytes(), '"v1"', MODIFIED)
+
+    clock = Clock()
+    client = FeedClient(fetch, ttl=15, clock=clock)
+    first = await client.get("https://feeds.test/main")
+    clock.now = 16
+    assert await client.get("https://feeds.test/main") is first  # 304: same parsed feed
+    assert calls == [None, Fetched(None, '"v1"', MODIFIED)]
+    clock.now = 20
+    await client.get("https://feeds.test/main")  # the 304 restarted the TTL
+    assert len(calls) == 2
+
+
+@pytest.fixture
+def feed_server() -> Iterator[tuple[str, list[dict[str, str]]]]:
+    """A local HTTP server serving main_feed.xml gzipped, with an ETag."""
+    body = (DATA / "main_feed.xml").read_bytes()
+    requests: list[dict[str, str]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(dict(self.headers))
+            if self.headers.get("If-None-Match") == '"v1"':
+                self.send_response(304)
+                self.end_headers()
+                return
+            data = gzip.compress(body)
+            self.send_response(200)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("ETag", '"v1"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/feed.xml", requests
+    server.shutdown()
+    server.server_close()
+
+
+async def test_fetch_url_asks_for_gzip_and_sends_the_etag(
+    feed_server: tuple[str, list[dict[str, str]]],
+) -> None:
+    url, requests = feed_server
+    first = await fetch_url(url)
+    assert first.data == (DATA / "main_feed.xml").read_bytes()  # decompressed
+    assert first.etag == '"v1"'
+    assert requests[0]["Accept-Encoding"] == "gzip"
+    second = await fetch_url(url, first)
+    assert second == Fetched(None, '"v1"', None)
+    assert requests[1]["If-None-Match"] == '"v1"'
 
 
 async def test_feed_client_errors() -> None:
