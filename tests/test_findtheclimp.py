@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,7 +12,13 @@ import pytest
 from sqlalchemy import update
 
 from yks.bot.client import YKSBot
-from yks.bot.cogs.findtheclimp import NOT_A_CHOICE, PostClipView, SearchCache, snippet_around
+from yks.bot.cogs.findtheclimp import (
+    NOT_A_CHOICE,
+    PostClipView,
+    SearchCache,
+    Timings,
+    snippet_around,
+)
 from yks.config import Settings
 from yks.db import Clip, ClipStatus, Database
 from yks.db.clips import NewClip, prefix_tsquery_text, record_clips, search_clips
@@ -138,6 +145,31 @@ def test_search_cache_expires() -> None:
     assert cache.get(2, 5) is None
     now[0] = 11
     assert cache.get(1, 5) is None
+
+
+def test_timings_report_each_step_and_the_total() -> None:
+    ticks = iter([0.0, 0.004, 0.184, 1.5])
+    timings = Timings(clock=lambda: next(ticks))
+    timings.mark("lookup")
+    timings.mark("fetch")
+    timings.mark("download")
+    assert str(timings) == "lookup=4ms fetch=180ms download=1316ms total=1500ms"
+
+
+async def test_command_logs_its_timings(
+    bot: YKSBot,
+    db: Database,
+    clip_channel: FakeChannel,
+    guild: FakeGuild,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack")
+    interaction = FakeInteraction(user=FakeUser(), guild=guild)
+    with caplog.at_level(logging.INFO, logger="yks.bot.cogs.findtheclimp"):
+        await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    (line,) = [r.getMessage() for r in caplog.records if "preview of clip" in r.getMessage()]
+    for step in ("defer=", "lookup=", "fetch=", "download=", "preview=", "total="):
+        assert step in line
 
 
 # --- search ---------------------------------------------------------------------------------

@@ -80,6 +80,26 @@ class SearchCache:
         self._entries.pop((user_id, clip_id), None)
 
 
+class Timings:
+    """How long each step of a request took, for one log line ("lookup=4ms fetch=180ms ...")."""
+
+    def __init__(self, clock: Callable[[], float] = time.perf_counter) -> None:
+        self._clock = clock
+        self._start = self._last = clock()
+        self.steps: list[tuple[str, float]] = []
+
+    def mark(self, step: str) -> None:
+        """Record the time since the previous mark (or the start) as `step`."""
+        now = self._clock()
+        self.steps.append((step, (now - self._last) * 1000))
+        self._last = now
+
+    def __str__(self) -> str:
+        parts = [f"{name}={ms:.0f}ms" for name, ms in self.steps]
+        parts.append(f"total={(self._last - self._start) * 1000:.0f}ms")
+        return " ".join(parts)
+
+
 def build_choices(clips: list[Clip], phrase: str) -> list[app_commands.Choice[str]]:
     """Up to 20 choices, one per distinct transcript (the same clip is often posted twice)."""
     seen: set[str] = set()
@@ -163,19 +183,23 @@ class FindTheClimp(commands.Cog):
     @app_commands.describe(search="Phrase to search for")
     @app_commands.guild_only()
     async def findtheclimp(self, interaction: discord.Interaction, search: str) -> None:
+        timings = Timings()
         await interaction.response.defer(ephemeral=True, thinking=True)
+        timings.mark("defer")
         if not search.isdigit():
             await interaction.edit_original_response(
                 content="Please wait for the autocomplete options!"
             )
             return
         clip_id = int(search)
-        found = await self._clip_attachment(clip_id)
+        found = await self._clip_attachment(clip_id, timings)
         if found is None:
             await interaction.edit_original_response(content="Something went wrong.")
+            log.info("/%s clip %s not found: %s", COMMAND_NAME, clip_id, timings)
             return
         _clip, attachment = found
         media = await load_media(attachment, interaction.guild)
+        timings.mark("download")
         payload = media.payload(interaction.guild)
         view = PostClipView(
             self,
@@ -188,6 +212,11 @@ class FindTheClimp(commands.Cog):
             await interaction.edit_original_response(attachments=[payload["file"]], view=view)
         else:
             await interaction.edit_original_response(content=payload["content"], view=view)
+        timings.mark("preview")
+        size = len(media.data) if media.data is not None else None
+        log.info(
+            "/%s preview of clip %s (%s bytes): %s", COMMAND_NAME, clip_id, size or "link", timings
+        )
 
     @findtheclimp.autocomplete("search")
     async def findtheclimp_autocomplete(
@@ -196,13 +225,23 @@ class FindTheClimp(commands.Cog):
         phrase = current.strip()
         if len(phrase) < MIN_SEARCH_LENGTH:
             return [app_commands.Choice(name="Enter a search term.", value=NOT_A_CHOICE)]
+        timings = Timings()
         try:
             async with self.bot.db.session() as session:
                 clips = await search_clips(session, phrase)
         except Exception:
             log.exception("Clip search failed for %r", phrase)
             return []
+        timings.mark("search")
         choices = build_choices(clips, phrase)
+        log.info(
+            "/%s autocomplete %r: %d choice(s) from %d clip(s): %s",
+            COMMAND_NAME,
+            phrase,
+            len(choices),
+            len(clips),
+            timings,
+        )
         if not choices:
             return [app_commands.Choice(name="No results.", value=NOT_A_CHOICE)]
         for choice in choices:
@@ -211,9 +250,13 @@ class FindTheClimp(commands.Cog):
 
     # --- helpers --------------------------------------------------------------------------------
 
-    async def _clip_attachment(self, clip_id: int) -> tuple[Clip, discord.Attachment] | None:
+    async def _clip_attachment(
+        self, clip_id: int, timings: Timings | None = None
+    ) -> tuple[Clip, discord.Attachment] | None:
         async with self.bot.db.session() as session:
             clip = await get_clip(session, clip_id)
+        if timings is not None:
+            timings.mark("lookup")
         if clip is None or clip.deleted:
             return None
         channel = self.bot.get_channel(clip.channel_id)
@@ -225,6 +268,9 @@ class FindTheClimp(commands.Cog):
             async with self.bot.db.session() as session:
                 await mark_messages_deleted(session, [clip.message_id])
             return None
+        finally:
+            if timings is not None:
+                timings.mark("fetch")
         attachment = next((a for a in message.attachments if a.id == clip.attachment_id), None)
         return (clip, attachment) if attachment else None
 
@@ -233,11 +279,14 @@ class FindTheClimp(commands.Cog):
         channel = self.bot.get_channel(self.bot.settings.yks_clip_channel_id or 0)
         if channel is None:
             return False
+        timings = Timings()
         payload = media.payload(getattr(channel, "guild", None))
         searched = f' for "{phrase}"' if phrase else ""
         credit = f"Requested by {user.mention} using the `/{COMMAND_NAME}` command{searched}."
         embed = discord.Embed(description=credit)
         await channel.send(embed=embed, **payload)  # type: ignore[union-attr]
+        timings.mark("send")
+        log.info("/%s posted %s: %s", COMMAND_NAME, media.filename, timings)
         return True
 
     # --- registering slash commands ---------------------------------------------------------------
