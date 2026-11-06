@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from yks.bot.media import attachment_payload
+from yks.bot.media import ClipMedia, load_media
 from yks.db.clips import get_clip, mark_messages_deleted, search_clips
 
 if TYPE_CHECKING:
@@ -100,37 +100,56 @@ def build_choices(clips: list[Clip], phrase: str) -> list[app_commands.Choice[st
 
 
 class PostClipView(discord.ui.View):
-    """'Post it' / 'Don't post it' under the private preview."""
+    """'Post it' / 'Don't post it' under the private preview.
+
+    Holds the clip downloaded for the preview, so posting it doesn't look the clip up, fetch its
+    message and download the file all over again.
+    """
 
     def __init__(
-        self, cog: FindTheClimp, *, requester_id: int, clip_id: int, phrase: str | None
+        self,
+        cog: FindTheClimp,
+        *,
+        requester_id: int,
+        clip_id: int,
+        phrase: str | None,
+        media: ClipMedia,
     ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT)
         self.cog = cog
         self.requester_id = requester_id
         self.clip_id = clip_id
         self.phrase = phrase
+        self.media: ClipMedia | None = media
         self.message: discord.InteractionMessage | None = None
+
+    def _release(self) -> None:
+        self.stop()
+        self.media = None  # don't keep the file in memory once it's been decided
+        self.cog.search_cache.discard(self.requester_id, self.clip_id)
+
+    async def on_timeout(self) -> None:
+        self._release()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.requester_id
 
     @discord.ui.button(label="Post it", style=discord.ButtonStyle.success)
     async def post(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        self.stop()
+        media = self.media
+        self._release()
         await interaction.response.edit_message(content="Posted.", attachments=[], view=None)
-        await self.cog.post_clip(interaction.user, self.clip_id, self.phrase)
-        self.cog.search_cache.discard(self.requester_id, self.clip_id)
+        if media is not None:
+            await self.cog.post_clip(interaction.user, media, self.phrase)
 
     @discord.ui.button(label="Don't post it", style=discord.ButtonStyle.danger)
     async def reject(
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
-        self.stop()
+        self._release()
         await interaction.response.edit_message(
             content="Didn't post. Is that a first for you?", attachments=[], view=None
         )
-        self.cog.search_cache.discard(self.requester_id, self.clip_id)
 
 
 class FindTheClimp(commands.Cog):
@@ -156,12 +175,14 @@ class FindTheClimp(commands.Cog):
             await interaction.edit_original_response(content="Something went wrong.")
             return
         _clip, attachment = found
-        payload = await attachment_payload(attachment, interaction.guild)
+        media = await load_media(attachment, interaction.guild)
+        payload = media.payload(interaction.guild)
         view = PostClipView(
             self,
             requester_id=interaction.user.id,
             clip_id=clip_id,
             phrase=self.search_cache.get(interaction.user.id, clip_id),
+            media=media,
         )
         if "file" in payload:
             await interaction.edit_original_response(attachments=[payload["file"]], view=view)
@@ -207,14 +228,12 @@ class FindTheClimp(commands.Cog):
         attachment = next((a for a in message.attachments if a.id == clip.attachment_id), None)
         return (clip, attachment) if attachment else None
 
-    async def post_clip(self, user: discord.abc.User, clip_id: int, phrase: str | None) -> bool:
-        """Post the clip to the clip channel, credited to the user who found it."""
+    async def post_clip(self, user: discord.abc.User, media: ClipMedia, phrase: str | None) -> bool:
+        """Post the previewed clip to the clip channel, credited to the user who found it."""
         channel = self.bot.get_channel(self.bot.settings.yks_clip_channel_id or 0)
-        found = await self._clip_attachment(clip_id)
-        if channel is None or found is None:
+        if channel is None:
             return False
-        _clip, attachment = found
-        payload = await attachment_payload(attachment, getattr(channel, "guild", None))
+        payload = media.payload(getattr(channel, "guild", None))
         searched = f' for "{phrase}"' if phrase else ""
         credit = f"Requested by {user.mention} using the `/{COMMAND_NAME}` command{searched}."
         embed = discord.Embed(description=credit)

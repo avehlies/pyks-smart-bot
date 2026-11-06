@@ -146,6 +146,13 @@ class Clip(Base):
         UniqueConstraint("message_id", "attachment_id", name="uq_clips_message_attachment"),
         Index("ix_clips_status", "status", "id"),
         Index("ix_clips_search", "search", postgresql_using="gin"),
+        # Substring search (/findtheclimp's ILIKE fallback). Needs the pg_trgm extension.
+        Index(
+            "ix_clips_transcription_trgm",
+            "transcription",
+            postgresql_using="gin",
+            postgresql_ops={"transcription": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

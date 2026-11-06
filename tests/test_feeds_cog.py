@@ -14,7 +14,7 @@ from yks.bot.client import YKSBot
 from yks.bot.cogs.feeds import FEED_UNAVAILABLE
 from yks.config import Settings
 from yks.db import Database, guilds
-from yks.feeds import FeedClient, FeedError
+from yks.feeds import FeedClient, FeedError, Fetched
 
 from .fakes import FakeChannel, FakeEmoji, FakeGuild, FakeUser
 from .harness import make_bot, patch_context_send, say
@@ -48,10 +48,10 @@ class FeedServer:
         first = feed.index("<item>")
         self.feeds[url] = feed[:first] + item_xml.strip() + "\n    " + feed[first:]
 
-    async def fetch(self, url: str) -> bytes:
+    async def fetch(self, url: str, previous: Fetched | None = None) -> Fetched:
         if self.down:
             raise FeedError("Could not fetch feed: HTTP Error 502: Bad Gateway")
-        return self.feeds[url].encode()
+        return Fetched(self.feeds[url].encode())
 
 
 @pytest.fixture

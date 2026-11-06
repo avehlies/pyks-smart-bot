@@ -1,18 +1,21 @@
 """Podcast RSS feeds: fetching, parsing, and a short-lived cache.
 
 The TS bot re-downloaded both feeds on every command. Here each URL is fetched at most once per
-`ttl` seconds, and concurrent requests for the same URL share one download.
+`ttl` seconds (then revalidated with a conditional request), and concurrent requests for the same
+URL share one download.
 """
 
 from __future__ import annotations
 
 import asyncio
 import calendar
+import gzip
 import html
 import logging
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -124,52 +127,101 @@ def parse_feed(data: bytes | str) -> Feed:
     )
 
 
-def _download(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=20.0) as response:
-        return response.read()
+@dataclass(frozen=True)
+class Fetched:
+    """A feed download. `data` is None when the server said the feed hasn't changed (304)."""
+
+    data: bytes | None
+    etag: str | None = None
+    last_modified: str | None = None
 
 
-async def fetch_url(url: str) -> bytes:
+def _download(url: str, previous: Fetched | None) -> Fetched:
+    headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"}
+    if previous is not None:
+        if previous.etag:
+            headers["If-None-Match"] = previous.etag
+        if previous.last_modified:
+            headers["If-Modified-Since"] = previous.last_modified
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20.0) as response:
+            data = response.read()
+            encoding = response.headers.get("Content-Encoding", "").lower()
+            etag = response.headers.get("ETag")
+            last_modified = response.headers.get("Last-Modified")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 304 and previous is not None:
+            return Fetched(None, previous.etag, previous.last_modified)
+        raise
+    if encoding == "gzip":
+        data = gzip.decompress(data)
+    return Fetched(data, etag, last_modified)
+
+
+async def fetch_url(url: str, previous: Fetched | None = None) -> Fetched:
     """Download a feed. Raises FeedError.
+
+    Asks for gzip (feeds compress about 10x) and, given the previous download, sends its
+    ETag / Last-Modified so an unchanged feed costs a body-less 304.
 
     This uses urllib rather than httpx: Patreon's Cloudflare challenges httpx's TLS handshake
     (which offers ALPN) with a 403 "Just a moment..." page, but lets urllib's through.
     """
     try:
-        return await asyncio.to_thread(_download, url)
-    except (OSError, ValueError) as exc:  # URLError, HTTPError and timeouts are all OSErrors
+        return await asyncio.to_thread(_download, url, previous)
+    except (OSError, ValueError, EOFError) as exc:  # URLError, HTTPError, timeouts, bad gzip
         raise FeedError(f"Could not fetch feed: {exc}") from exc
+
+
+Fetch = Callable[[str, "Fetched | None"], Awaitable[Fetched]]
+
+
+@dataclass
+class _Cached:
+    fetched_at: float
+    feed: Feed
+    download: Fetched  # validators for the next conditional request (body dropped)
 
 
 class FeedClient:
     def __init__(
         self,
-        fetch: Callable[[str], Awaitable[bytes]] = fetch_url,
+        fetch: Fetch = fetch_url,
         *,
-        ttl: float = 15.0,
+        ttl: float = 120.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._fetch = fetch
         self._ttl = ttl
         self._clock = clock
-        self._cache: dict[str, tuple[float, Feed]] = {}
+        self._cache: dict[str, _Cached] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def get(self, url: str) -> Feed:
-        """Return the parsed feed, from cache if fresh. Raises FeedError."""
+        """Return the parsed feed, from cache if fresh. Raises FeedError.
+
+        Once the cached copy is older than `ttl`, the feed is re-requested conditionally: if the
+        server answers 304, the cached parse is reused without downloading or parsing again.
+        """
         if not url:
             raise FeedError("Feed URL is not configured")
         lock = self._locks.setdefault(url, asyncio.Lock())
         async with lock:
             cached = self._cache.get(url)
-            if cached and self._clock() - cached[0] < self._ttl:
-                return cached[1]
-            data = await self._fetch(url)
+            if cached and self._clock() - cached.fetched_at < self._ttl:
+                return cached.feed
+            fetched = await self._fetch(url, cached.download if cached else None)
+            if fetched.data is None:
+                if cached is None:
+                    raise FeedError("Feed server sent 304 Not Modified without a cached copy")
+                cached.fetched_at = self._clock()
+                return cached.feed
             # feedparser is pure Python: a long feed can take a noticeable time to parse, which
             # would stall the bot's event loop (heartbeats, every other command) if done inline.
-            feed = await asyncio.to_thread(parse_feed, data)
-            self._cache[url] = (self._clock(), feed)
+            feed = await asyncio.to_thread(parse_feed, fetched.data)
+            validators = Fetched(None, fetched.etag, fetched.last_modified)
+            self._cache[url] = _Cached(self._clock(), feed, validators)
             return feed
 
 

@@ -14,7 +14,7 @@ from yks.bot.client import YKSBot
 from yks.bot.cogs.findtheclimp import NOT_A_CHOICE, PostClipView, SearchCache, snippet_around
 from yks.config import Settings
 from yks.db import Clip, ClipStatus, Database
-from yks.db.clips import NewClip, record_clips, search_clips
+from yks.db.clips import NewClip, prefix_tsquery_text, record_clips, search_clips
 
 from .fakes import FakeAttachment, FakeChannel, FakeGuild, FakeUser
 from .harness import make_bot, patch_context_send, say
@@ -156,6 +156,24 @@ async def test_search_ranks_and_falls_back_to_substring(
         assert await search_clips(session, "zeppelin") == []
 
 
+async def test_search_matches_a_half_typed_last_word(
+    db: Database, clip_channel: FakeChannel
+) -> None:
+    sock, _ = await add_transcribed(db, clip_channel, "the self-folding sock is back")
+    await add_transcribed(db, clip_channel, "a folding chair")
+    async with db.session() as session:
+        assert [c.id for c in await search_clips(session, "folding soc")] == [sock]
+        assert [c.id for c in await search_clips(session, "self-fold")] == [sock]
+        (found,) = await search_clips(session, "sock is ba")
+        assert found.transcription == "the self-folding sock is back"
+
+
+def test_prefix_tsquery_text() -> None:
+    assert prefix_tsquery_text("Folding  so") == "folding & so:*"
+    assert prefix_tsquery_text("it's a <trap> | !x & y:*") == "it & s & a & trap & x & y:*"
+    assert prefix_tsquery_text(" ... ") is None
+
+
 async def test_search_skips_untranscribed_and_deleted(
     db: Database, clip_channel: FakeChannel
 ) -> None:
@@ -248,6 +266,20 @@ async def test_post_it_button(
     )
     assert posted.file_bytes == [b"jet"]
     assert cog(bot).search_cache.get(user.id, clip_id) is None
+    assert view.media is None  # the downloaded file is let go
+
+
+async def test_post_it_reuses_the_preview_download(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
+    user = FakeUser()
+    interaction = FakeInteraction(user=user, guild=guild)
+    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    clip_channel.stored.clear()  # posting must not need to fetch the message again
+    await interaction.edits[0]["view"].post.callback(FakeInteraction(user=user, guild=guild))
+    (posted,) = clip_channel.sent
+    assert posted.file_bytes == [b"jet"]
 
 
 async def test_dont_post_it_button(

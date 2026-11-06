@@ -14,7 +14,7 @@ import httpx
 
 from yks_clip_worker.config import WorkerSettings
 from yks_clip_worker.discord_api import DiscordAPI, DiscordError
-from yks_clip_worker.media import DownloadError, download
+from yks_clip_worker.media import DownloadError, download, link_is_fresh
 from yks_clip_worker.queue import NOTIFY_CHANNEL, ClipQueue, Job
 from yks_clip_worker.transcriber import Transcriber
 
@@ -61,6 +61,37 @@ class Worker:
         return True
 
     async def _process(self, job: Job) -> None:
+        with tempfile.TemporaryDirectory(prefix="yks-clip-") as tmp:
+            try:
+                path = await self._download(job, Path(tmp))
+            except DownloadError as exc:
+                status = await self.queue.fail(
+                    job, str(exc), max_attempts=self.settings.max_attempts, permanent=exc.permanent
+                )
+                log.warning("Clip %s: %s (%s)", job.id, exc, status)
+                return
+            if path is None:
+                return  # already recorded (deleted, or a Discord API error)
+            text = await self.transcriber.transcribe(path)
+        await self.queue.complete(job, text)
+        log.info("Clip %s done: %d characters", job.id, len(text))
+
+    async def _download(self, job: Job, directory: Path) -> Path | None:
+        """Download the clip. Returns None if the job was already recorded as deleted/failed.
+
+        The stored CDN link is used as is while its signature is still valid (most clips are
+        transcribed minutes after they're posted), which saves a Discord API call per clip. The
+        message is only fetched for a fresh link when the stored one has expired or is refused.
+        """
+        max_bytes = self.settings.max_download_mb * 1024 * 1024
+        if link_is_fresh(job.url):
+            try:
+                return await download(self.http, job.url, directory, max_bytes=max_bytes)
+            except DownloadError as exc:
+                if not exc.gone:
+                    raise
+                log.info("Clip %s: stored link refused (%s); refreshing it.", job.id, exc)
+
         try:
             url = await self.discord.fresh_attachment_url(
                 job.channel_id, job.message_id, job.attachment_id
@@ -68,28 +99,14 @@ class Worker:
         except (DiscordError, httpx.HTTPError) as exc:
             status = await self.queue.fail(job, str(exc), max_attempts=self.settings.max_attempts)
             log.warning("Clip %s: Discord API error (%s): %s", job.id, status, exc)
-            return
+            return None
         if url is None:
             log.info("Clip %s: message or attachment deleted; skipping.", job.id)
             await self.queue.mark_deleted(job)
-            return
+            return None
         if url != job.url:
             await self.queue.update_url(job, url)
-
-        with tempfile.TemporaryDirectory(prefix="yks-clip-") as tmp:
-            try:
-                path = await download(
-                    self.http, url, Path(tmp), max_bytes=self.settings.max_download_mb * 1024 * 1024
-                )
-            except DownloadError as exc:
-                status = await self.queue.fail(
-                    job, str(exc), max_attempts=self.settings.max_attempts, permanent=exc.permanent
-                )
-                log.warning("Clip %s: %s (%s)", job.id, exc, status)
-                return
-            text = await self.transcriber.transcribe(path)
-        await self.queue.complete(job, text)
-        log.info("Clip %s done: %d characters", job.id, len(text))
+        return await download(self.http, url, directory, max_bytes=max_bytes)
 
     async def drain(self) -> int:
         """Process clips until none are ready. Returns how many were handled."""

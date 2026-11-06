@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import mimetypes
+from dataclasses import dataclass
 from typing import Any
 
 import discord
@@ -36,3 +38,31 @@ async def attachment_payload(
         except discord.HTTPException:
             log.warning("Could not download attachment %s; linking instead", attachment.id)
     return {"content": attachment.url}
+
+
+@dataclass(frozen=True)
+class ClipMedia:
+    """An attachment downloaded once, to be posted more than once (a preview, then the post).
+
+    `data` is None when the file was too big to upload (or couldn't be downloaded): it's linked.
+    """
+
+    filename: str
+    url: str
+    data: bytes | None
+
+    def payload(self, guild: discord.Guild | None) -> dict[str, Any]:
+        """`send()` kwargs for this media in `guild` (whose upload limit may be smaller)."""
+        if self.data is not None and len(self.data) <= upload_limit(guild):
+            return {"file": discord.File(io.BytesIO(self.data), filename=self.filename)}
+        return {"content": self.url}
+
+
+async def load_media(attachment: discord.Attachment, guild: discord.Guild | None) -> ClipMedia:
+    data = None
+    if attachment.size <= upload_limit(guild):
+        try:
+            data = await attachment.read()
+        except discord.HTTPException:
+            log.warning("Could not download attachment %s; linking instead", attachment.id)
+    return ClipMedia(filename=attachment.filename, url=attachment.url, data=data)

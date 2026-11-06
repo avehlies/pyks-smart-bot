@@ -7,12 +7,14 @@ rows start as `pending` and the database trigger notifies the worker.
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from yks.db.models import Clip, ClipStatus
 
@@ -88,11 +90,29 @@ async def mark_messages_deleted(session: AsyncSession, message_ids: Iterable[int
     return result.rowcount or 0
 
 
+_WORDS = re.compile(r"[^\W_]+")
+
+
+def prefix_tsquery_text(phrase: str) -> str | None:
+    """`to_tsquery` text that ANDs the phrase's words and treats the last one as a prefix.
+
+    Autocomplete runs on every keystroke, so the last word is usually half typed ("jetpa").
+    Only letters and digits are kept, so the result can't contain tsquery syntax.
+    """
+    words = _WORDS.findall(phrase.lower())
+    if not words:
+        return None
+    return " & ".join([*words[:-1], f"{words[-1]}:*"])
+
+
 async def search_clips(session: AsyncSession, phrase: str, *, limit: int = 60) -> list[Clip]:
     """Transcribed clips matching `phrase`, best match first.
 
-    Uses Postgres full-text search (stemmed, ranked). If that finds nothing, for example when the
-    phrase is all stop words ("it is what it is"), fall back to a case-insensitive substring match.
+    Uses Postgres full-text search (stemmed, ranked; the last word may be partly typed). If that
+    finds nothing, for example when the phrase is all stop words ("it is what it is"), fall back
+    to a case-insensitive substring match (served by a trigram index).
+
+    Only `id` and `transcription` are loaded: this runs on every autocomplete keystroke.
     """
     searchable = (
         Clip.deleted.is_(False),
@@ -100,19 +120,23 @@ async def search_clips(session: AsyncSession, phrase: str, *, limit: int = 60) -
         Clip.transcription.is_not(None),
         Clip.transcription != "",
     )
-    query = func.websearch_to_tsquery("english", phrase)
-    ranked = (
-        select(Clip)
-        .where(*searchable, Clip.search.op("@@")(query))
-        .order_by(func.ts_rank(Clip.search, query).desc(), Clip.id.desc())
-        .limit(limit)
-    )
-    found = list((await session.scalars(ranked)).all())
-    if found:
-        return found
+    columns = load_only(Clip.id, Clip.transcription)
+    if (text := prefix_tsquery_text(phrase)) is not None:
+        query = func.to_tsquery("english", text)
+        ranked = (
+            select(Clip)
+            .options(columns)
+            .where(*searchable, Clip.search.op("@@")(query))
+            .order_by(func.ts_rank(Clip.search, query).desc(), Clip.id.desc())
+            .limit(limit)
+        )
+        found = list((await session.scalars(ranked)).all())
+        if found:
+            return found
     escaped = phrase.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     substring = (
         select(Clip)
+        .options(columns)
         .where(*searchable, Clip.transcription.ilike(f"%{escaped}%", escape="\\"))
         .order_by(Clip.id.desc())
         .limit(limit)

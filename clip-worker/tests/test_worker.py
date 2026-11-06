@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import types
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -14,6 +15,7 @@ import httpx
 import pytest
 from yks_clip_worker.config import WorkerSettings, asyncpg_dsn
 from yks_clip_worker.discord_api import DiscordAPI
+from yks_clip_worker.media import link_expires_at, link_is_fresh
 from yks_clip_worker.queue import ClipQueue
 from yks_clip_worker.transcriber import WhisperTranscriber
 from yks_clip_worker.worker import Worker
@@ -56,6 +58,7 @@ class FakeDiscord:
         self.cdn_body = b"\x00fake media bytes"
         self.rate_limit_once = False
         self.api_calls = 0
+        self.live_links: set[str] = set()  # stored links the CDN still accepts
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -72,7 +75,7 @@ class FakeDiscord:
                 {"id": str(a), "url": FRESH_URL.format(a=a)} for a in self.messages[message_id]
             ]
             return httpx.Response(200, json={"id": str(message_id), "attachments": attachments})
-        if "ex=fresh" in url:
+        if "ex=fresh" in url or url in self.live_links:
             return httpx.Response(self.cdn_status, content=self.cdn_body)
         return httpx.Response(403)  # expired link
 
@@ -196,6 +199,55 @@ async def test_transcribes_with_a_fresh_url(
     assert row["transcribed_at"] is not None
     assert not transcriber.paths[0].exists()  # temp file cleaned up
     assert await worker.process_one() is False
+
+
+def signed_url(attachment_id: int, expires: float) -> str:
+    return f"https://cdn.discordapp.com/attachments/111/{attachment_id}/clip.mp4?ex={int(expires):x}&hm=abc"
+
+
+async def test_unexpired_stored_link_skips_the_discord_api(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    url = signed_url(20, time.time() + 86400)
+    fake_discord.live_links.add(url)
+    clip_id = await insert_clip(pool, 10, 20, url=url)
+    await worker.drain()
+    row = await clip_row(pool, clip_id)
+    assert (row["status"], row["url"]) == ("done", url)
+    assert fake_discord.api_calls == 0
+
+
+async def test_refused_stored_link_is_refreshed(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    url = signed_url(20, time.time() + 86400)  # looks valid, but the CDN says 403
+    clip_id = await insert_clip(pool, 10, 20, url=url)
+    fake_discord.messages[10] = [20]
+    await worker.drain()
+    row = await clip_row(pool, clip_id)
+    assert (row["status"], row["url"]) == ("done", FRESH_URL.format(a=20))
+    assert fake_discord.api_calls == 1
+
+
+async def test_expired_stored_link_is_refreshed_first(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    url = signed_url(20, time.time() + 60)  # inside the safety margin
+    fake_discord.live_links.add(url)
+    clip_id = await insert_clip(pool, 10, 20, url=url)
+    fake_discord.messages[10] = [20]
+    await worker.drain()
+    assert (await clip_row(pool, clip_id))["url"] == FRESH_URL.format(a=20)
+    assert fake_discord.api_calls == 1
+
+
+def test_link_expiry_parsing() -> None:
+    assert link_expires_at(signed_url(1, 1_700_000_000)) == 1_700_000_000
+    assert link_expires_at(OLD_URL.format(a=1)) is None  # not hex
+    assert link_expires_at("https://cdn.discordapp.com/attachments/1/2/a.mp4") is None
+    assert link_is_fresh(signed_url(1, 2000), now=1000)
+    assert not link_is_fresh(signed_url(1, 1500), now=1000)  # within the 10 minute margin
+    assert not link_is_fresh(OLD_URL.format(a=1), now=1000)
 
 
 async def test_full_text_search_sees_the_transcript(
