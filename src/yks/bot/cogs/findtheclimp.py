@@ -14,8 +14,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from yks.bot.media import ClipMedia, load_media
-from yks.db.clips import get_clip, mark_messages_deleted, search_clips
+from yks.bot.media import ClipMedia, LinkGone, download_media, link_is_fresh, upload_limit
+from yks.db.clips import get_clip, mark_messages_deleted, search_clips, set_clip_url
 
 if TYPE_CHECKING:
     from yks.bot.client import YKSBot
@@ -170,12 +170,11 @@ class FindTheClimp(commands.Cog):
             )
             return
         clip_id = int(search)
-        found = await self._clip_attachment(clip_id)
-        if found is None:
+        clip = await self._live_clip(clip_id)
+        media = await self._load_media(clip, interaction.guild) if clip else None
+        if media is None:
             await interaction.edit_original_response(content="Something went wrong.")
             return
-        _clip, attachment = found
-        media = await load_media(attachment, interaction.guild)
         payload = media.payload(interaction.guild)
         view = PostClipView(
             self,
@@ -211,11 +210,13 @@ class FindTheClimp(commands.Cog):
 
     # --- helpers --------------------------------------------------------------------------------
 
-    async def _clip_attachment(self, clip_id: int) -> tuple[Clip, discord.Attachment] | None:
+    async def _live_clip(self, clip_id: int) -> Clip | None:
         async with self.bot.db.session() as session:
             clip = await get_clip(session, clip_id)
-        if clip is None or clip.deleted:
-            return None
+        return None if clip is None or clip.deleted else clip
+
+    async def _fresh_link(self, clip: Clip) -> str | None:
+        """A newly signed link for the clip, from its Discord message (None if it's gone)."""
         channel = self.bot.get_channel(clip.channel_id)
         if channel is None:
             return None
@@ -226,7 +227,41 @@ class FindTheClimp(commands.Cog):
                 await mark_messages_deleted(session, [clip.message_id])
             return None
         attachment = next((a for a in message.attachments if a.id == clip.attachment_id), None)
-        return (clip, attachment) if attachment else None
+        if attachment is None:
+            return None
+        if attachment.url != clip.url:
+            async with self.bot.db.session() as session:
+                await set_clip_url(session, clip.id, attachment.url)
+            clip.url = attachment.url
+        return attachment.url
+
+    async def _load_media(self, clip: Clip, guild: discord.Guild | None) -> ClipMedia | None:
+        """Download the clip (or settle for linking it). None if it no longer exists.
+
+        The stored link is used while its signature is valid, which skips a Discord API call;
+        the message is fetched for a new link only when it has expired or the CDN refuses it.
+        """
+        fresh = link_is_fresh(clip.url)
+        url = clip.url if fresh else await self._fresh_link(clip)
+        if url is None:
+            return None
+        try:
+            return await self._download(clip, url, guild)
+        except LinkGone:
+            if not fresh:
+                return None  # a link just handed out by Discord was refused: the file is gone
+        url = await self._fresh_link(clip)
+        if url is None:
+            return None
+        try:
+            return await self._download(clip, url, guild)
+        except LinkGone:
+            return None
+
+    async def _download(self, clip: Clip, url: str, guild: discord.Guild | None) -> ClipMedia:
+        return await download_media(
+            self.bot.http_client, url, clip.filename, max_bytes=upload_limit(guild)
+        )
 
     async def post_clip(self, user: discord.abc.User, media: ClipMedia, phrase: str | None) -> bool:
         """Post the previewed clip to the clip channel, credited to the user who found it."""

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import discord
+import httpx
 import pytest
 from sqlalchemy import update
 
 from yks.bot.client import YKSBot
 from yks.bot.cogs.findtheclimp import NOT_A_CHOICE, PostClipView, SearchCache, snippet_around
+from yks.bot.media import link_is_fresh
 from yks.config import Settings
 from yks.db import Clip, ClipStatus, Database
 from yks.db.clips import NewClip, prefix_tsquery_text, record_clips, search_clips
@@ -56,12 +59,38 @@ def clip_channel(guild: FakeGuild) -> FakeChannel:
     return FakeChannel(guild=guild, name="clips")
 
 
+class FakeCDN:
+    """Serves attachment bytes by URL: links of messages in the clip channel, plus `extra`."""
+
+    def __init__(self, channel: FakeChannel) -> None:
+        self.channel = channel
+        self.extra: dict[str, bytes] = {}
+        self.requests: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        self.requests.append(url)
+        if url in self.extra:
+            return httpx.Response(200, content=self.extra[url])
+        for message in self.channel.stored.values():
+            for attachment in message.attachments:
+                if attachment.url == url:
+                    return httpx.Response(200, content=attachment.data)
+        return httpx.Response(403)  # expired or unknown link
+
+
+@pytest.fixture
+def cdn(clip_channel: FakeChannel) -> FakeCDN:
+    return FakeCDN(clip_channel)
+
+
 @pytest.fixture
 async def bot(
     db: Database,
     database_url: str,
     guild: FakeGuild,
     clip_channel: FakeChannel,
+    cdn: FakeCDN,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[YKSBot]:
     patch_context_send(monkeypatch)
@@ -71,8 +100,14 @@ async def bot(
     instance = await make_bot(settings, db)
     instance.get_cog("Tallies").prune_mailbag.cancel()
     monkeypatch.setattr(instance, "get_channel", guild.get_channel)
+    await instance.http_client.aclose()
+    instance.http_client = httpx.AsyncClient(transport=httpx.MockTransport(cdn.handler))
     yield instance
     await instance.http_client.aclose()
+
+
+def signed_url(expires: float) -> str:
+    return f"https://cdn.discordapp.com/attachments/1/2/clip.mp4?ex={int(expires):x}&hm=abc"
 
 
 async def add_transcribed(
@@ -138,6 +173,43 @@ def test_search_cache_expires() -> None:
     assert cache.get(2, 5) is None
     now[0] = 11
     assert cache.get(1, 5) is None
+
+
+async def test_command_uses_an_unexpired_stored_link_without_fetching(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
+) -> None:
+    clip_id, _ = await add_transcribed(db, clip_channel, "jetpack")
+    url = signed_url(time.time() + 86400)
+    cdn.extra[url] = b"stored link bytes"
+    async with db.session() as session:
+        await session.execute(update(Clip).where(Clip.id == clip_id).values(url=url))
+    clip_channel.stored.clear()  # fetching the message would fail
+    interaction = FakeInteraction(user=FakeUser(), guild=guild)
+    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    assert interaction.edits[0]["file_bytes"] == [b"stored link bytes"]
+    assert cdn.requests == [url]
+
+
+async def test_command_refreshes_a_refused_stored_link(
+    bot: YKSBot, db: Database, clip_channel: FakeChannel, guild: FakeGuild, cdn: FakeCDN
+) -> None:
+    clip_id, attachment = await add_transcribed(db, clip_channel, "jetpack", data=b"jet")
+    stale = signed_url(time.time() + 86400)  # looks valid, but the CDN refuses it
+    async with db.session() as session:
+        await session.execute(update(Clip).where(Clip.id == clip_id).values(url=stale))
+    interaction = FakeInteraction(user=FakeUser(), guild=guild)
+    await cog(bot).findtheclimp.callback(cog(bot), interaction, str(clip_id))
+    assert interaction.edits[0]["file_bytes"] == [b"jet"]
+    assert cdn.requests == [stale, attachment.url]
+    async with db.session() as session:
+        assert (await session.get(Clip, clip_id)).url == attachment.url  # remembered
+
+
+def test_link_is_fresh() -> None:
+    assert link_is_fresh(signed_url(2000), now=1000)
+    assert not link_is_fresh(signed_url(1500), now=1000)  # inside the 10 minute margin
+    assert not link_is_fresh("https://cdn.discordapp.com/a/b/c.mp4?ex=nothex", now=1000)
+    assert not link_is_fresh("https://cdn.discordapp.com/a/b/c.mp4", now=1000)
 
 
 # --- search ---------------------------------------------------------------------------------

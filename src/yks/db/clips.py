@@ -80,6 +80,11 @@ async def get_clip(session: AsyncSession, clip_id: int) -> Clip | None:
     return await session.get(Clip, clip_id)
 
 
+async def set_clip_url(session: AsyncSession, clip_id: int, url: str) -> None:
+    """Remember a freshly signed CDN link, so the next lookup can skip refreshing it."""
+    await session.execute(update(Clip).where(Clip.id == clip_id).values(url=url))
+
+
 async def mark_messages_deleted(session: AsyncSession, message_ids: Iterable[int]) -> int:
     ids = list(message_ids)
     if not ids:
