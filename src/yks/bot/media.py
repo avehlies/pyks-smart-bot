@@ -54,6 +54,11 @@ class ClipMedia:
     url: str
     data: bytes | None
 
+    @property
+    def size_label(self) -> str:
+        """For logs: "1234567 bytes", or "link" when it's posted as a link."""
+        return "link" if self.data is None else f"{len(self.data)} bytes"
+
     def payload(self, guild: discord.Guild | None) -> dict[str, Any]:
         """`send()` kwargs for this media in `guild` (whose upload limit may be smaller)."""
         if self.data is not None and len(self.data) <= upload_limit(guild):

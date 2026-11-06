@@ -5,6 +5,8 @@ Transcripts are written by the separate clip-worker service; this cog only reads
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -80,6 +82,26 @@ class SearchCache:
         self._entries.pop((user_id, clip_id), None)
 
 
+class Timings:
+    """How long each step of a request took, for one log line ("lookup=4ms fetch=180ms ...")."""
+
+    def __init__(self, clock: Callable[[], float] = time.perf_counter) -> None:
+        self._clock = clock
+        self._start = self._last = clock()
+        self.steps: list[tuple[str, float]] = []
+
+    def mark(self, step: str) -> None:
+        """Record the time since the previous mark (or the start) as `step`."""
+        now = self._clock()
+        self.steps.append((step, (now - self._last) * 1000))
+        self._last = now
+
+    def __str__(self) -> str:
+        parts = [f"{name}={ms:.0f}ms" for name, ms in self.steps]
+        parts.append(f"total={(self._last - self._start) * 1000:.0f}ms")
+        return " ".join(parts)
+
+
 def build_choices(clips: list[Clip], phrase: str) -> list[app_commands.Choice[str]]:
     """Up to 20 choices, one per distinct transcript (the same clip is often posted twice)."""
     seen: set[str] = set()
@@ -102,8 +124,8 @@ def build_choices(clips: list[Clip], phrase: str) -> list[app_commands.Choice[st
 class PostClipView(discord.ui.View):
     """'Post it' / 'Don't post it' under the private preview.
 
-    Holds the clip downloaded for the preview, so posting it doesn't look the clip up, fetch its
-    message and download the file all over again.
+    The preview is just the clip's link, so it shows up at once. The file for the public post is
+    downloaded in the background meanwhile (`download`), so "Post it" rarely has to wait for it.
     """
 
     def __init__(
@@ -113,42 +135,49 @@ class PostClipView(discord.ui.View):
         requester_id: int,
         clip_id: int,
         phrase: str | None,
-        media: ClipMedia,
+        download: asyncio.Task[ClipMedia | None],
     ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT)
         self.cog = cog
         self.requester_id = requester_id
         self.clip_id = clip_id
         self.phrase = phrase
-        self.media: ClipMedia | None = media
+        self.download: asyncio.Task[ClipMedia | None] | None = download
         self.message: discord.InteractionMessage | None = None
 
-    def _release(self) -> None:
+    def _release(self, *, cancel: bool) -> asyncio.Task[ClipMedia | None] | None:
+        """Finish with the view. Returns the download (cancelled if `cancel`: not posting)."""
         self.stop()
-        self.media = None  # don't keep the file in memory once it's been decided
+        download, self.download = self.download, None
+        if cancel and download is not None:
+            download.cancel()
         self.cog.search_cache.discard(self.requester_id, self.clip_id)
+        return download
 
     async def on_timeout(self) -> None:
-        self._release()
+        self._release(cancel=True)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.requester_id
 
     @discord.ui.button(label="Post it", style=discord.ButtonStyle.success)
     async def post(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        media = self.media
-        self._release()
-        await interaction.response.edit_message(content="Posted.", attachments=[], view=None)
-        if media is not None:
-            await self.cog.post_clip(interaction.user, media, self.phrase)
+        download = self._release(cancel=False)
+        await interaction.response.edit_message(content="Posting...", view=None)
+        posted = download is not None and await self.cog.post_clip(
+            interaction.user, download, self.phrase
+        )
+        await interaction.edit_original_response(
+            content="Posted." if posted else "Couldn't post it: the clip seems to be gone."
+        )
 
     @discord.ui.button(label="Don't post it", style=discord.ButtonStyle.danger)
     async def reject(
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
-        self._release()
+        self._release(cancel=True)
         await interaction.response.edit_message(
-            content="Didn't post. Is that a first for you?", attachments=[], view=None
+            content="Didn't post. Is that a first for you?", view=None
         )
 
 
@@ -163,30 +192,34 @@ class FindTheClimp(commands.Cog):
     @app_commands.describe(search="Phrase to search for")
     @app_commands.guild_only()
     async def findtheclimp(self, interaction: discord.Interaction, search: str) -> None:
+        timings = Timings()
         await interaction.response.defer(ephemeral=True, thinking=True)
+        timings.mark("defer")
         if not search.isdigit():
             await interaction.edit_original_response(
                 content="Please wait for the autocomplete options!"
             )
             return
         clip_id = int(search)
-        clip = await self._live_clip(clip_id)
-        media = await self._load_media(clip, interaction.guild) if clip else None
-        if media is None:
+        clip = await self._live_clip(clip_id, timings)
+        url = await self._link(clip, timings) if clip else None
+        if clip is None or url is None:
             await interaction.edit_original_response(content="Something went wrong.")
+            log.info("/%s clip %s not found: %s", COMMAND_NAME, clip_id, timings)
             return
-        payload = media.payload(interaction.guild)
+        # The preview is the link (Discord plays it inline): no download and re-upload to wait
+        # for. The file for the public post downloads in the background meanwhile.
+        download = asyncio.create_task(self._load_media(clip, url))
         view = PostClipView(
             self,
             requester_id=interaction.user.id,
             clip_id=clip_id,
             phrase=self.search_cache.get(interaction.user.id, clip_id),
-            media=media,
+            download=download,
         )
-        if "file" in payload:
-            await interaction.edit_original_response(attachments=[payload["file"]], view=view)
-        else:
-            await interaction.edit_original_response(content=payload["content"], view=view)
+        await interaction.edit_original_response(content=url, view=view)
+        timings.mark("preview")
+        log.info("/%s preview of clip %s: %s", COMMAND_NAME, clip_id, timings)
 
     @findtheclimp.autocomplete("search")
     async def findtheclimp_autocomplete(
@@ -195,13 +228,23 @@ class FindTheClimp(commands.Cog):
         phrase = current.strip()
         if len(phrase) < MIN_SEARCH_LENGTH:
             return [app_commands.Choice(name="Enter a search term.", value=NOT_A_CHOICE)]
+        timings = Timings()
         try:
             async with self.bot.db.session() as session:
                 clips = await search_clips(session, phrase)
         except Exception:
             log.exception("Clip search failed for %r", phrase)
             return []
+        timings.mark("search")
         choices = build_choices(clips, phrase)
+        log.info(
+            "/%s autocomplete %r: %d choice(s) from %d clip(s): %s",
+            COMMAND_NAME,
+            phrase,
+            len(choices),
+            len(clips),
+            timings,
+        )
         if not choices:
             return [app_commands.Choice(name="No results.", value=NOT_A_CHOICE)]
         for choice in choices:
@@ -210,12 +253,20 @@ class FindTheClimp(commands.Cog):
 
     # --- helpers --------------------------------------------------------------------------------
 
-    async def _live_clip(self, clip_id: int) -> Clip | None:
+    async def _live_clip(self, clip_id: int, timings: Timings) -> Clip | None:
         async with self.bot.db.session() as session:
             clip = await get_clip(session, clip_id)
+        timings.mark("lookup")
         return None if clip is None or clip.deleted else clip
 
-    async def _fresh_link(self, clip: Clip) -> str | None:
+    async def _link(self, clip: Clip, timings: Timings) -> str | None:
+        """A working link for the clip. The stored one is used while its signature is valid,
+        which skips a Discord API call; otherwise the message is fetched for a new one."""
+        if link_is_fresh(clip.url):
+            return clip.url
+        return await self._fresh_link(clip, timings)
+
+    async def _fresh_link(self, clip: Clip, timings: Timings) -> str | None:
         """A newly signed link for the clip, from its Discord message (None if it's gone)."""
         channel = self.bot.get_channel(clip.channel_id)
         if channel is None:
@@ -226,6 +277,8 @@ class FindTheClimp(commands.Cog):
             async with self.bot.db.session() as session:
                 await mark_messages_deleted(session, [clip.message_id])
             return None
+        finally:
+            timings.mark("fetch")
         attachment = next((a for a in message.attachments if a.id == clip.attachment_id), None)
         if attachment is None:
             return None
@@ -235,44 +288,62 @@ class FindTheClimp(commands.Cog):
             clip.url = attachment.url
         return attachment.url
 
-    async def _load_media(self, clip: Clip, guild: discord.Guild | None) -> ClipMedia | None:
-        """Download the clip (or settle for linking it). None if it no longer exists.
+    def _clip_channel(self) -> Any | None:
+        return self.bot.get_channel(self.bot.settings.yks_clip_channel_id or 0)
 
-        The stored link is used while its signature is valid, which skips a Discord API call;
-        the message is fetched for a new link only when it has expired or the CDN refuses it.
+    async def _load_media(self, clip: Clip, url: str) -> ClipMedia | None:
+        """Download the clip for posting (or settle for linking it, if it's too big to upload).
+        None if it no longer exists. Runs in the background while the user looks at the preview.
         """
-        fresh = link_is_fresh(clip.url)
-        url = clip.url if fresh else await self._fresh_link(clip)
-        if url is None:
-            return None
+        timings = Timings()
+        guild = getattr(self._clip_channel(), "guild", None)
         try:
-            return await self._download(clip, url, guild)
+            media = await self._download(clip, url, guild)
         except LinkGone:
-            if not fresh:
-                return None  # a link just handed out by Discord was refused: the file is gone
-        url = await self._fresh_link(clip)
-        if url is None:
-            return None
-        try:
-            return await self._download(clip, url, guild)
-        except LinkGone:
-            return None
+            timings.mark("download")
+            # The link was refused: expired early, or the message is gone. Ask Discord once.
+            fresh = await self._fresh_link(clip, timings)
+            media = None
+            if fresh is not None and fresh != url:
+                with contextlib.suppress(LinkGone):
+                    media = await self._download(clip, fresh, guild)
+        timings.mark("download")
+        size = "gone" if media is None else media.size_label
+        log.info("/%s downloaded clip %s (%s): %s", COMMAND_NAME, clip.id, size, timings)
+        return media
 
     async def _download(self, clip: Clip, url: str, guild: discord.Guild | None) -> ClipMedia:
         return await download_media(
             self.bot.http_client, url, clip.filename, max_bytes=upload_limit(guild)
         )
 
-    async def post_clip(self, user: discord.abc.User, media: ClipMedia, phrase: str | None) -> bool:
-        """Post the previewed clip to the clip channel, credited to the user who found it."""
-        channel = self.bot.get_channel(self.bot.settings.yks_clip_channel_id or 0)
+    async def post_clip(
+        self,
+        user: discord.abc.User,
+        download: asyncio.Task[ClipMedia | None],
+        phrase: str | None,
+    ) -> bool:
+        """Post the previewed clip to the clip channel, credited to the user who found it.
+        Returns False if it couldn't (the clip is gone)."""
+        channel = self._clip_channel()
         if channel is None:
+            return False
+        timings = Timings()
+        try:
+            media = await download
+        except Exception:
+            log.exception("Downloading a clip to post failed")
+            media = None
+        timings.mark("wait")  # how long the background download still had to go
+        if media is None:
             return False
         payload = media.payload(getattr(channel, "guild", None))
         searched = f' for "{phrase}"' if phrase else ""
         credit = f"Requested by {user.mention} using the `/{COMMAND_NAME}` command{searched}."
         embed = discord.Embed(description=credit)
-        await channel.send(embed=embed, **payload)  # type: ignore[union-attr]
+        await channel.send(embed=embed, **payload)
+        timings.mark("send")
+        log.info("/%s posted %s (%s): %s", COMMAND_NAME, media.filename, media.size_label, timings)
         return True
 
     # --- registering slash commands ---------------------------------------------------------------
