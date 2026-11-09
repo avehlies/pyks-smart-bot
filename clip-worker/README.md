@@ -55,3 +55,17 @@ SELECT id, attempts, last_error FROM clips WHERE status = 'failed' ORDER BY id D
 -- retry failed clips:
 UPDATE clips SET status = 'pending', attempts = 0, retry_at = NULL WHERE status = 'failed';
 ```
+
+## Re-transcribing existing clips
+
+Changing `WHISPER_MODEL` only affects new clips. To redo the old ones, recreate the worker with the new model, then run [`scripts/requeue-clips.sh`](scripts/requeue-clips.sh) on the Docker host:
+
+```sh
+BEFORE="$(docker inspect -f '{{.State.StartedAt}}' pyks_clip_worker)"; echo "$BEFORE"
+clip-worker/scripts/requeue-clips.sh --model small.en --before "$BEFORE" --dry-run
+clip-worker/scripts/requeue-clips.sh --model small.en --before "$BEFORE"
+```
+
+It queues one clip at a time, so only the clip being worked on is missing from `/findtheclimp`, and new posts go first. It can take many hours, so run it in `tmux` or `screen`. Ctrl-C is safe. To resume, use the same `--before` value, not a fresh one: a restarted worker has a later start time, which would redo clips that are already finished.
+
+A clip that can't be redone keeps its old transcript and stays searchable, with `last_error` set. The container names default to `pyks_postgres` and `pyks_clip_worker`; set `PG_CONTAINER` and `WORKER_CONTAINER` if yours differ.
