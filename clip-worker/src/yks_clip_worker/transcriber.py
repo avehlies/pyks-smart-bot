@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class TranscribeTimeout(Exception):
+    """The transcription took longer than allowed; its process was killed."""
+
+
 class Transcriber(Protocol):
     async def transcribe(self, path: Path) -> str:
         """Return the transcript of an audio/video file ("" if there's no speech)."""
@@ -130,11 +134,16 @@ class ProcessTranscriber:
     * After `idle_seconds` with no clips, the child exits and all of its memory is freed.
       `idle_seconds <= 0` keeps it running for good.
     * If the child crashes, the clip fails (and is retried later); the next clip starts a new child.
+    * A clip that takes longer than `timeout_seconds` (a hung decoder, say) has its child killed
+      and raises TranscribeTimeout. `timeout_seconds <= 0` waits forever.
     """
 
-    def __init__(self, spec: BackendSpec, *, idle_seconds: float = 300.0) -> None:
+    def __init__(
+        self, spec: BackendSpec, *, idle_seconds: float = 300.0, timeout_seconds: float = 0.0
+    ) -> None:
         self._spec = spec
         self._idle_seconds = idle_seconds
+        self._timeout = timeout_seconds if timeout_seconds > 0 else None
         self._pool: ProcessPoolExecutor | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
         self._busy = 0
@@ -148,6 +157,7 @@ class ProcessTranscriber:
         compute_type: str,
         beam_size: int,
         idle_seconds: float,
+        timeout_seconds: float = 0.0,
     ) -> ProcessTranscriber:
         kwargs = {
             "model": model,
@@ -155,7 +165,11 @@ class ProcessTranscriber:
             "compute_type": compute_type,
             "beam_size": beam_size,
         }
-        return cls(BackendSpec(kwargs=tuple(kwargs.items())), idle_seconds=idle_seconds)
+        return cls(
+            BackendSpec(kwargs=tuple(kwargs.items())),
+            idle_seconds=idle_seconds,
+            timeout_seconds=timeout_seconds,
+        )
 
     @property
     def loaded(self) -> bool:
@@ -180,9 +194,18 @@ class ProcessTranscriber:
         pool = self._pool
         self._busy += 1
         try:
-            return await asyncio.get_running_loop().run_in_executor(
-                pool, _child_transcribe, str(path)
+            future = asyncio.get_running_loop().run_in_executor(pool, _child_transcribe, str(path))
+            return await asyncio.wait_for(future, self._timeout)
+        except TimeoutError:
+            log.error(
+                "Transcribing %s took over %ds; killing the transcription process.",
+                path.name,
+                self._timeout,
             )
+            if self._pool is pool:
+                self._pool = None
+            await self._kill(pool)
+            raise TranscribeTimeout(f"Transcription took over {self._timeout:.0f}s") from None
         except BrokenProcessPool:
             log.error("The transcription process died; it will be restarted for the next clip.")
             self._stop()
@@ -217,8 +240,12 @@ class ProcessTranscriber:
             self._idle_timer.cancel()
             self._idle_timer = None
         pool, self._pool = self._pool, None
-        if pool is None:
-            return
+        if pool is not None:
+            await self._kill(pool)
+
+    @staticmethod
+    async def _kill(pool: ProcessPoolExecutor) -> None:
+        """Stop the child without waiting for its current transcription to finish."""
         for process in list(getattr(pool, "_processes", {}).values()):
-            process.terminate()  # don't wait for a long transcription to finish
+            process.terminate()
         await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=True)

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 yks-clip-worker = "yks_clip_worker.__main__:main"
+yks-clip-worker-health = "yks_clip_worker.health:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -184,6 +184,9 @@ class ClipQueue:
     async def update_url(self, job: Job, url: str) -> None:
         await self.pool.execute("UPDATE clips SET url = $2 WHERE id = $1", job.id, url)
 
+    async def ping(self) -> None:
+        await self.pool.fetchval("SELECT 1")
+
     async def counts(self) -> dict[str, int]:
         rows = await self.pool.fetch("SELECT status, count(*) AS n FROM clips GROUP BY status")
         return {row["status"]: row["n"] for row in rows}

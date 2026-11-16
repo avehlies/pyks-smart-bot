@@ -38,6 +38,10 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package yks-clip-worker
 USER worker
+# Fails when the worker's heartbeat file is stale: the database is unreachable, or a clip has been
+# stuck for far longer than TRANSCRIBE_TIMEOUT_SECONDS allows. See clip-worker/README.md.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["yks-clip-worker-health"]
 CMD ["yks-clip-worker"]
 
 # The Discord bot. Keep this stage last: it's the default target.
