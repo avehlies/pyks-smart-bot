@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import discord
 import pytest
 
 from yks.bot.client import YKSBot
@@ -251,6 +252,22 @@ async def test_new_bonus_episode_is_announced_unless_public(
     assert await feeds.check_feeds() == ["bonus"]
     assert rss_channel.embeds[-1].fields[0].name == "Patreon Exclusive: 89"
     assert bot.change_presence.await_args.kwargs["activity"].name == "Patreon Exclusive: 89"
+
+
+async def test_presence_is_set_again_after_a_new_session(bot: YKSBot) -> None:
+    feeds = bot.get_cog("Feeds")
+    await feeds.on_ready()  # first connection: nothing to restore yet
+    bot.change_presence.assert_not_awaited()
+    await feeds.check_feeds()
+    assert bot.change_presence.await_count == 1
+    await feeds.check_feeds()  # same episode: not set again
+    assert bot.change_presence.await_count == 1
+
+    await feeds.on_ready()  # a reconnect that started a new gateway session
+    assert bot.change_presence.await_count == 2
+    presence = bot.change_presence.await_args.kwargs
+    assert presence["activity"].name == "Bonus: Live in Nashville"
+    assert presence["status"] is discord.Status.dnd
 
 
 async def test_check_survives_feed_outage(

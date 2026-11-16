@@ -229,11 +229,8 @@ class Feeds(commands.Cog):
         if bonus and bonus.latest:
             title = normalize_title(bonus.latest.title)
             if title != self._presence_title:
-                await self.bot.change_presence(
-                    status=discord.Status.dnd,
-                    activity=discord.Activity(type=discord.ActivityType.listening, name=title),
-                )
                 self._presence_title = title
+                await self._show_presence()
             if title != seen_bonus:
                 async with self.bot.db.session() as session:
                     await set_state(session, LATEST_BONUS_TITLE, title)
@@ -244,6 +241,26 @@ class Feeds(commands.Cog):
                     await self.announce("bonus")
                     announced.append("bonus")
         return announced
+
+    async def _show_presence(self) -> None:
+        """Show "Listening to <latest bonus episode>", with Do Not Disturb."""
+        if self._presence_title is None:
+            return
+        await self.bot.change_presence(
+            status=discord.Status.dnd,
+            activity=discord.Activity(
+                type=discord.ActivityType.listening, name=self._presence_title
+            ),
+        )
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        # A reconnect with a new gateway session (on_ready; a resumed one keeps it) sends the
+        # presence the client was created with, which is none: discord.py's change_presence()
+        # doesn't update that. Set it again, or it stays blank until the next new episode.
+        if self._presence_title is not None:
+            log.info("Reconnected; setting the presence again.")
+            await self._show_presence()
 
     async def announce(self, which: Which) -> None:
         """Post the latest episode to every guild's configured RSS channel, with reactions."""
