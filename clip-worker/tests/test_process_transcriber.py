@@ -128,6 +128,7 @@ async def test_whisper_factory_builds_the_spec() -> None:
         device="cpu",
         compute_type="int8",
         beam_size=3,
+        cpu_threads=2,
         idle_seconds=120,
         timeout_seconds=900,
     )
@@ -138,5 +139,6 @@ async def test_whisper_factory_builds_the_spec() -> None:
         "device": "cpu",
         "compute_type": "int8",
         "beam_size": 3,
+        "cpu_threads": 2,
     }
     assert not transcriber.loaded  # nothing starts until the first clip

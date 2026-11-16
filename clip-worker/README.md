@@ -31,6 +31,7 @@ Set `WHISPER_IDLE_UNLOAD_SECONDS=0` to keep the model loaded all the time (faste
 | `WHISPER_DEVICE` | `cpu` | `cuda` for a GPU. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` on a GPU. |
 | `WHISPER_BEAM_SIZE` | `3` | Lower is faster on a CPU (`1` is greedy decoding), higher is slightly more accurate (`5` is faster-whisper's usual default). |
+| `WHISPER_CPU_THREADS` | `0` | Threads the model uses on a CPU. `0` is faster-whisper's default, 4. Going above the machine's core count doesn't help; going lower leaves CPU for the bot and anything else on the host. |
 | `WHISPER_IDLE_UNLOAD_SECONDS` | `300` | Stop the model's process after this long with no clips. `0` keeps it loaded. |
 | `TRANSCRIBE_TIMEOUT_SECONDS` | `1800` | Kill the model's process if one clip takes longer (including loading, or first downloading, the model); the clip counts as a failed attempt. `0` waits forever. |
 | `RETRANSCRIBE` | `true` | When idle, redo clips transcribed with a different `WHISPER_MODEL`. |

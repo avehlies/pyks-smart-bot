@@ -29,6 +29,9 @@ class WorkerSettings(BaseSettings):
     # A middle ground: faster than faster-whisper's usual 5 on a CPU, a little more accurate than
     # greedy decoding (1). Lower it for speed, raise it for slightly better transcripts.
     whisper_beam_size: int = 3
+    # Threads the model uses on a CPU. 0 is faster-whisper's default (4). More than the machine's
+    # cores doesn't help; fewer leaves CPU for the bot and anything else on the host.
+    whisper_cpu_threads: int = 0
     # Stop the transcription process (freeing the model's memory) after this many seconds with no
     # clips; the next clip starts it again. 0 keeps the model loaded all the time.
     whisper_idle_unload_seconds: float = 300.0
