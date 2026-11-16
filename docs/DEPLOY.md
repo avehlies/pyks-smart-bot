@@ -353,7 +353,7 @@ Use a member account that isn't the owner; the owner skips cooldowns, which can 
 
 ```sh
 curl -i http://<this server>:<PORT>/healthz
-# {"ok": true, "discord": true}
+# HTTP 200 {"ok": true, "discord": true, "disconnected_for": 0}
 ```
 
 ### 4.12 Record clips posted while neither bot was online
@@ -461,7 +461,7 @@ Anything that happened while the new bot was running isn't in MongoDB: new `!bes
 | `bot` exits with `password authentication failed` | `POSTGRES_PASSWORD` was changed after the database was created (step 2.3). Either put the old value back, or change the real password: `docker compose exec postgres psql -U yks -d yks -c "ALTER USER yks PASSWORD 'new-password';"`, then `docker compose up -d`. |
 | `migrate` fails | Read `docker compose logs migrate`. It's usually the same password problem, or Postgres not being healthy yet; run `docker compose up -d migrate` again. |
 | `bind: address already in use` on port 3000 | Something else (often the old bot) is using `PORT`. Stop it, or set a different `PORT` in `.env`. |
-| `bot` shows `unhealthy` | `docker compose logs bot`. The HTTP API didn't start, or the process is stuck. `curl localhost:$PORT/healthz` on the server shows whether it's reachable. |
+| `bot` shows `unhealthy` | `docker compose logs bot`. The HTTP API didn't start, the process is stuck, or the bot has been disconnected from Discord for over 2 minutes (`/healthz` answers 503 with `"discord": false`). `curl localhost:$PORT/healthz` on the server shows which. |
 | `clip-worker` shows `unhealthy` | `docker compose exec clip-worker yks-clip-worker-health` says why. `docker compose logs clip-worker` shows a warning: the database check failed, or no progress for too long (a clip stuck past `TRANSCRIBE_TIMEOUT_SECONDS`). Restart it with `docker compose restart clip-worker`. |
 | Import: `ServerSelectionTimeoutError` | The server can't reach MongoDB: check the Atlas IP access list (2.5), the host name, and the `mongodb+srv://` vs `mongodb://` form. |
 | Import: `Authentication failed` | Wrong user or password in `MONGO_URL`, a special character not percent-encoded, or `authSource=admin` missing for self-hosted. |
