@@ -32,7 +32,7 @@ async def run(settings: WorkerSettings) -> None:
         idle_seconds=settings.whisper_idle_unload_seconds,
     )
     worker = Worker(
-        queue=ClipQueue(pool),
+        queue=ClipQueue(pool, model=settings.whisper_model),
         discord=discord,
         http=http,
         transcriber=transcriber,

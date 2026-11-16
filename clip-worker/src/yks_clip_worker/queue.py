@@ -4,6 +4,10 @@ Contract with the bot (schema owned by the bot's Alembic migrations):
 * The bot inserts rows with `status = 'pending'`; a trigger sends `NOTIFY clips_new, '<id>'`.
 * The worker moves a row `pending -> processing -> done | failed`, or marks it `deleted` +
   `skipped` if the Discord message is gone.
+* When nothing is pending, the worker re-transcribes `done` clips whose `transcribed_model` isn't
+  its own model. Those stay `done` (and searchable, with the old transcript) throughout: the claim
+  only sets `claimed_at`. A redo that fails for good keeps the old transcript, with `last_error`
+  set and `attempts` at the limit, and isn't tried again.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ class Job:
     url: str
     filename: str
     attempts: int  # including this one
+    redo: bool = False  # re-transcribing a `done` clip made with another model
 
 
 def backoff(attempts: int) -> timedelta:
@@ -33,8 +38,9 @@ def backoff(attempts: int) -> timedelta:
 
 
 class ClipQueue:
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: asyncpg.Pool, *, model: str) -> None:
         self.pool = pool
+        self.model = model  # the Whisper model this worker runs, recorded with each transcript
 
     async def reclaim_stale(self, older_than: timedelta) -> int:
         """Put back clips left in `processing` (worker crashed or was killed mid-job)."""
@@ -67,22 +73,71 @@ class ClipQueue:
         )
         return Job(**dict(row)) if row else None
 
+    async def claim_redo(self, *, max_attempts: int, stale_after: timedelta) -> Job | None:
+        """Take the newest `done` clip transcribed by another model, to transcribe it again.
+
+        It stays `done`, so /findtheclimp keeps finding it by its old transcript meanwhile.
+        `claimed_at` marks it as taken; a claim older than `stale_after` (the worker was killed)
+        can be taken again. Clips with an unknown model (NULL) are left alone.
+        """
+        row = await self.pool.fetchrow(
+            """
+            UPDATE clips SET claimed_at = now(), attempts = attempts + 1
+            WHERE id = (
+                SELECT id FROM clips
+                WHERE status = 'done' AND NOT deleted
+                  AND transcribed_model IS NOT NULL AND transcribed_model <> $1
+                  AND attempts < $2
+                  AND (retry_at IS NULL OR retry_at <= now())
+                  AND (claimed_at IS NULL OR claimed_at < now() - $3::interval)
+                ORDER BY id DESC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, channel_id, message_id, attachment_id, url, filename, attempts
+            """,
+            self.model,
+            max_attempts,
+            stale_after,
+        )
+        return Job(**dict(row), redo=True) if row else None
+
     async def complete(self, job: Job, transcription: str) -> None:
+        # `attempts` restarts at 0: on a `done` clip it counts attempts to re-transcribe it.
         await self.pool.execute(
             """
-            UPDATE clips SET status = 'done', transcription = $2, transcribed_at = now(),
+            UPDATE clips SET status = 'done', transcription = $2, transcribed_model = $3,
+                transcribed_at = now(), attempts = 0,
                 claimed_at = NULL, retry_at = NULL, last_error = NULL
             WHERE id = $1
             """,
             job.id,
             transcription,
+            self.model,
         )
 
     async def fail(
         self, job: Job, error: str, *, max_attempts: int, permanent: bool = False
     ) -> str:
-        """Record a failed attempt: retry later with backoff, or give up. Returns the new status."""
+        """Record a failed attempt: retry later with backoff, or give up. Returns "pending" (it
+        will be retried) or "failed" (given up). A failed redo keeps its old transcript and stays
+        `done`; giving up sets `attempts` to the limit so it isn't claimed again."""
         status = "failed" if permanent or job.attempts >= max_attempts else "pending"
+        if job.redo:
+            await self.pool.execute(
+                """
+                UPDATE clips SET last_error = $2, claimed_at = NULL,
+                    attempts = CASE WHEN $3 THEN greatest(attempts, $4) ELSE attempts END,
+                    retry_at = CASE WHEN $3 THEN NULL ELSE now() + $5::interval END
+                WHERE id = $1 AND status = 'done'
+                """,
+                job.id,
+                error[:2000],
+                status == "failed",
+                max_attempts,
+                backoff(job.attempts),
+            )
+            return status
         await self.pool.execute(
             """
             UPDATE clips SET status = $2::varchar, last_error = $3, claimed_at = NULL,
@@ -98,6 +153,15 @@ class ClipQueue:
 
     async def release(self, job: Job) -> None:
         """Hand a job back untouched (shutting down mid-job): this attempt doesn't count."""
+        if job.redo:
+            await self.pool.execute(
+                """
+                UPDATE clips SET claimed_at = NULL, attempts = greatest(attempts - 1, 0)
+                WHERE id = $1 AND status = 'done'
+                """,
+                job.id,
+            )
+            return
         await self.pool.execute(
             """
             UPDATE clips SET status = 'pending', claimed_at = NULL,
@@ -123,3 +187,16 @@ class ClipQueue:
     async def counts(self) -> dict[str, int]:
         rows = await self.pool.fetch("SELECT status, count(*) AS n FROM clips GROUP BY status")
         return {row["status"]: row["n"] for row in rows}
+
+    async def redo_backlog(self, *, max_attempts: int) -> int:
+        """How many `done` clips are waiting to be re-transcribed with this worker's model."""
+        return await self.pool.fetchval(
+            """
+            SELECT count(*) FROM clips
+            WHERE status = 'done' AND NOT deleted
+              AND transcribed_model IS NOT NULL AND transcribed_model <> $1
+              AND attempts < $2
+            """,
+            self.model,
+            max_attempts,
+        )

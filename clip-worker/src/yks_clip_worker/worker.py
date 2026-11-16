@@ -42,12 +42,28 @@ class Worker:
         """asyncpg NOTIFY callback (connection, pid, channel, payload)."""
         self._wake.set()
 
+    async def _claim(self) -> Job | None:
+        """The next new clip; failing that, an old clip to re-transcribe with this model."""
+        job = await self.queue.claim()
+        if job is None and self.settings.retranscribe:
+            job = await self.queue.claim_redo(
+                max_attempts=self.settings.max_attempts,
+                stale_after=timedelta(minutes=self.settings.stale_after_minutes),
+            )
+        return job
+
     async def process_one(self) -> bool:
         """Handle the next ready clip. Returns False if the queue was empty."""
-        job = await self.queue.claim()
+        job = await self._claim()
         if job is None:
             return False
-        log.info("Transcribing clip %s (%s), attempt %d", job.id, job.filename, job.attempts)
+        log.info(
+            "%s clip %s (%s), attempt %d",
+            "Re-transcribing" if job.redo else "Transcribing",
+            job.id,
+            job.filename,
+            job.attempts,
+        )
         try:
             await self._process(job)
         except asyncio.CancelledError:
@@ -120,6 +136,10 @@ class Worker:
         await listen_conn.add_listener(NOTIFY_CHANNEL, self.wake)
         stale = timedelta(minutes=self.settings.stale_after_minutes)
         log.info("Clip worker ready; queue: %s", await self.queue.counts())
+        if self.settings.retranscribe and (
+            backlog := await self.queue.redo_backlog(max_attempts=self.settings.max_attempts)
+        ):
+            log.info("%d clip(s) to re-transcribe with %s.", backlog, self.queue.model)
         while True:
             self._wake.clear()
             if reclaimed := await self.queue.reclaim_stale(stale):

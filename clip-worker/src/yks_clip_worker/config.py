@@ -33,6 +33,10 @@ class WorkerSettings(BaseSettings):
     # clips; the next clip starts it again. 0 keeps the model loaded all the time.
     whisper_idle_unload_seconds: float = 300.0
 
+    # When no new clips are waiting, transcribe clips made with a different WHISPER_MODEL again,
+    # newest first. They stay searchable by their old transcript until the new one is saved.
+    retranscribe: bool = True
+
     max_attempts: int = 3
     # Seconds between queue checks when no NOTIFY arrives (a safety net; NOTIFY wakes it sooner).
     poll_interval_seconds: float = 60.0

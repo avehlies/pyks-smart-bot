@@ -21,6 +21,7 @@ from yks_clip_worker.transcriber import WhisperTranscriber
 from yks_clip_worker.worker import Worker
 
 CHANNEL = 111
+MODEL = "small.en"  # the model the test worker runs
 OLD_URL = "https://cdn.discordapp.com/attachments/111/{a}/clip.mp4?ex=old"
 FRESH_URL = "https://cdn.discordapp.com/attachments/111/{a}/clip.mp4?ex=fresh"
 
@@ -113,9 +114,11 @@ async def worker(
     pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
 ) -> AsyncIterator[Worker]:
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake_discord.handler))
-    settings = WorkerSettings(_env_file=None, auth_token="test-token", max_attempts=3)
+    settings = WorkerSettings(
+        _env_file=None, auth_token="test-token", max_attempts=3, whisper_model=MODEL
+    )
     yield Worker(
-        queue=ClipQueue(pool),
+        queue=ClipQueue(pool, model=MODEL),
         discord=DiscordAPI("test-token", http),
         http=http,
         transcriber=transcriber,
@@ -128,7 +131,7 @@ async def worker(
 
 
 async def test_claim_order_and_filters(pool: asyncpg.Pool) -> None:
-    queue = ClipQueue(pool)
+    queue = ClipQueue(pool, model=MODEL)
     oldest = await insert_clip(pool, 1, 1)
     await insert_clip(pool, 2, 2, deleted=True)
     await insert_clip(pool, 3, 3, status="done")
@@ -145,7 +148,7 @@ async def test_claim_order_and_filters(pool: asyncpg.Pool) -> None:
 async def test_concurrent_claims_never_share_a_clip(pool: asyncpg.Pool) -> None:
     for i in range(10):
         await insert_clip(pool, i, i)
-    queue = ClipQueue(pool)
+    queue = ClipQueue(pool, model=MODEL)
     jobs = await asyncio.gather(*(queue.claim() for _ in range(12)))
     ids = [job.id for job in jobs if job]
     assert len(ids) == 10
@@ -153,7 +156,7 @@ async def test_concurrent_claims_never_share_a_clip(pool: asyncpg.Pool) -> None:
 
 
 async def test_fail_backs_off_then_gives_up(pool: asyncpg.Pool) -> None:
-    queue = ClipQueue(pool)
+    queue = ClipQueue(pool, model=MODEL)
     clip_id = await insert_clip(pool, 1, 1)
     for attempt in (1, 2):
         job = await queue.claim()
@@ -169,7 +172,7 @@ async def test_fail_backs_off_then_gives_up(pool: asyncpg.Pool) -> None:
 
 
 async def test_release_and_reclaim(pool: asyncpg.Pool) -> None:
-    queue = ClipQueue(pool)
+    queue = ClipQueue(pool, model=MODEL)
     clip_id = await insert_clip(pool, 1, 1)
     await queue.release(await queue.claim())
     row = await clip_row(pool, clip_id)
@@ -197,6 +200,7 @@ async def test_transcribes_with_a_fresh_url(
     assert row["transcription"] == "oh no they did another one"
     assert row["url"] == FRESH_URL.format(a=20)
     assert row["transcribed_at"] is not None
+    assert (row["transcribed_model"], row["attempts"]) == (MODEL, 0)
     assert not transcriber.paths[0].exists()  # temp file cleaned up
     assert await worker.process_one() is False
 
@@ -367,6 +371,135 @@ async def test_run_wakes_on_notify(
         with pytest.raises(asyncio.CancelledError):
             await task
         await listen.close()
+
+
+# --- re-transcribing clips made with another model ----------------------------------------------
+
+
+async def insert_done(
+    pool: asyncpg.Pool, message_id: int, model: str | None, **extra: object
+) -> int:
+    return await insert_clip(
+        pool,
+        message_id,
+        message_id,
+        status="done",
+        transcription="old words",
+        transcribed_model=model,
+        **extra,
+    )
+
+
+async def test_redo_replaces_an_old_models_transcript(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
+) -> None:
+    clip_id = await insert_done(pool, 10, "tiny.en")
+    fake_discord.messages[10] = [10]
+    transcriber.gate = asyncio.Event()  # hold it mid-transcription to look at the row
+    task = asyncio.create_task(worker.process_one())
+    await asyncio.wait_for(transcriber.gate.wait(), 5)
+    row = await clip_row(pool, clip_id)
+    # Still searchable by its old transcript while it's being redone.
+    assert (row["status"], row["transcription"], row["attempts"]) == ("done", "old words", 1)
+    assert row["claimed_at"] is not None
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    row = await clip_row(pool, clip_id)  # handed back untouched
+    assert (row["status"], row["claimed_at"], row["attempts"]) == ("done", None, 0)
+
+    transcriber.gate = None
+    assert await worker.process_one() is True
+    row = await clip_row(pool, clip_id)
+    assert (row["status"], row["transcription"]) == ("done", "oh no they did another one")
+    assert (row["transcribed_model"], row["attempts"], row["claimed_at"]) == (MODEL, 0, None)
+    assert await worker.process_one() is False  # nothing left to redo
+
+
+async def test_redo_only_unknown_or_other_models(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    await insert_done(pool, 1, None)  # unknown: left alone
+    await insert_done(pool, 2, MODEL)  # already current
+    await insert_done(pool, 3, "tiny.en", deleted=True)
+    await insert_clip(pool, 4, 4, status="failed", transcribed_model="tiny.en")
+    assert await worker.queue.redo_backlog(max_attempts=3) == 0
+    assert await worker.process_one() is False
+
+    old = await insert_done(pool, 5, "tiny.en")
+    assert await worker.queue.redo_backlog(max_attempts=3) == 1
+    worker.settings = worker.settings.model_copy(update={"retranscribe": False})
+    assert await worker.process_one() is False
+    assert (await clip_row(pool, old))["claimed_at"] is None
+
+
+async def test_new_clips_go_before_redos(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
+) -> None:
+    old = await insert_done(pool, 1, "tiny.en")
+    new = await insert_clip(pool, 2, 2)
+    fake_discord.messages.update({1: [1], 2: [2]})
+    assert await worker.process_one() is True
+    assert (await clip_row(pool, new))["status"] == "done"
+    assert (await clip_row(pool, old))["transcribed_model"] == "tiny.en"
+    assert await worker.process_one() is True
+    assert (await clip_row(pool, old))["transcribed_model"] == MODEL
+
+
+async def test_failed_redo_keeps_the_old_transcript(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
+) -> None:
+    transcriber.error = RuntimeError("decoder exploded")
+    clip_id = await insert_done(pool, 10, "tiny.en")
+    fake_discord.messages[10] = [10]
+    for attempt in (1, 2, 3):
+        await pool.execute("UPDATE clips SET retry_at = NULL WHERE id = $1", clip_id)
+        assert await worker.process_one() is True
+        row = await clip_row(pool, clip_id)
+        assert (row["status"], row["transcription"], row["attempts"]) == (
+            "done",
+            "old words",
+            attempt,
+        )
+        assert row["last_error"] == "RuntimeError: decoder exploded"
+        assert (row["retry_at"] is None) == (attempt == 3)  # backoff, until it gives up
+    assert await worker.process_one() is False  # given up: not claimed again
+    assert row["transcribed_model"] == "tiny.en"
+
+
+async def test_permanent_redo_failure_gives_up_at_once(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    worker.settings = worker.settings.model_copy(update={"max_download_mb": 0})
+    clip_id = await insert_done(pool, 10, "tiny.en")
+    fake_discord.messages[10] = [10]
+    assert await worker.process_one() is True
+    row = await clip_row(pool, clip_id)
+    assert (row["status"], row["transcription"], row["attempts"]) == ("done", "old words", 3)
+    assert "MAX_DOWNLOAD_MB" in row["last_error"]
+    assert await worker.process_one() is False
+
+
+async def test_redo_of_a_deleted_message_drops_the_clip(
+    worker: Worker, pool: asyncpg.Pool, fake_discord: FakeDiscord
+) -> None:
+    clip_id = await insert_done(pool, 10, "tiny.en")  # the message isn't in fake_discord
+    assert await worker.process_one() is True
+    row = await clip_row(pool, clip_id)
+    assert (row["status"], row["deleted"]) == ("skipped", True)
+
+
+async def test_stale_redo_claims_are_taken_again(pool: asyncpg.Pool) -> None:
+    queue = ClipQueue(pool, model=MODEL)
+    clip_id = await insert_done(pool, 10, "tiny.en")
+    stale = timedelta(minutes=30)
+    assert (await queue.claim_redo(max_attempts=3, stale_after=stale)).id == clip_id
+    assert await queue.claim_redo(max_attempts=3, stale_after=stale) is None  # taken
+    await pool.execute(
+        "UPDATE clips SET claimed_at = now() - interval '2 hours' WHERE id = $1", clip_id
+    )
+    job = await queue.claim_redo(max_attempts=3, stale_after=stale)
+    assert (job.id, job.attempts, job.redo) == (clip_id, 2, True)
 
 
 # --- config and the Whisper wrapper -----------------------------------------------------------
