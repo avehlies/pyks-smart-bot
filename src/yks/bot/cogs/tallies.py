@@ -25,7 +25,13 @@ THIS_EMOJI = "this"
 GREEN = 0x83C133
 TOP_N = 10
 MAILBAG_WINDOW = timedelta(days=30)
-FIELD_VALUE_LIMIT = 1024
+# Discord rejects an embed over 6000 characters in total, so ten full fields (1024 each) can't
+# be sent. These limits keep a full top 10 under it: 10 * (80 + 500) + a title < 6000.
+EMBED_LIMIT = 6000
+FIELD_NAME_LIMIT = 80
+FIELD_VALUE_LIMIT = 500
+TITLE_ALLOWANCE = 100
+assert TOP_N * (FIELD_NAME_LIMIT + FIELD_VALUE_LIMIT) + TITLE_ALLOWANCE <= EMBED_LIMIT
 
 
 def ellipsis(text: str, limit: int = FIELD_VALUE_LIMIT) -> str:
@@ -191,7 +197,9 @@ class Tallies(commands.Cog):
                 if self.bot.user and message.author.id == self.bot.user.id:
                     continue  # the bot's own posts don't count
                 embed.add_field(
-                    name=f"{len(embed.fields) + 1}. From {message.author.name}",
+                    name=ellipsis(
+                        f"{len(embed.fields) + 1}. From {message.author.name}", FIELD_NAME_LIMIT
+                    ),
                     value=ellipsis(f"[Jump to message]({message.jump_url})\n{message.content}"),
                     inline=False,
                 )
@@ -217,7 +225,10 @@ class Tallies(commands.Cog):
                 generated = message.embeds[0]
                 entries.append(
                     (
-                        f"{len(entries) + 1}: {generated.title or 'Untitled'}"[:256],
+                        ellipsis(
+                            f"{len(entries) + 1}: {generated.title or 'Untitled'}",
+                            FIELD_NAME_LIMIT,
+                        ),
                         ellipsis(
                             f"[Jump to message]({message.jump_url})\n{generated.description or ''}"
                         ),
