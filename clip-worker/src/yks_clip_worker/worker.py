@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import tempfile
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -37,6 +38,7 @@ class Worker:
         self.transcriber = transcriber
         self.settings = settings
         self._wake = asyncio.Event()
+        self._last_progress = time.monotonic()  # the loop went round, or a clip finished
 
     def wake(self, *_: object) -> None:
         """asyncpg NOTIFY callback (connection, pid, channel, payload)."""
@@ -129,7 +131,47 @@ class Worker:
         handled = 0
         while await self.process_one():
             handled += 1
+            self._last_progress = time.monotonic()
         return handled
+
+    def _stall_limit(self) -> float:
+        return self.settings.transcribe_timeout_seconds + self.settings.stall_margin_seconds
+
+    def stalled(self) -> bool:
+        """Has the worker been stuck on something for much longer than any clip should take?"""
+        if self.settings.transcribe_timeout_seconds <= 0:
+            return False  # no limit on a clip, so no way to tell
+        return time.monotonic() - self._last_progress > self._stall_limit()
+
+    async def beat(self) -> bool:
+        """Touch the heartbeat file if the worker is healthy. Returns whether it did."""
+        if self.stalled():
+            log.warning("No progress for over %.0fs; not reporting healthy.", self._stall_limit())
+            return False
+        try:
+            await asyncio.wait_for(self.queue.ping(), timeout=10)
+        except (OSError, TimeoutError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
+            log.warning("Database check failed (%r); not reporting healthy.", exc)
+            return False
+        self._touch_heartbeat()
+        return True
+
+    # A file in /tmp: these are too quick to bother a thread with.
+    def _touch_heartbeat(self) -> None:
+        Path(self.settings.heartbeat_file).touch()
+
+    def _remove_heartbeat(self) -> None:
+        with contextlib.suppress(OSError):
+            Path(self.settings.heartbeat_file).unlink(missing_ok=True)
+
+    async def heartbeat(self) -> None:
+        """Run `beat` every HEARTBEAT_INTERVAL_SECONDS, for the Docker healthcheck."""
+        while True:
+            try:
+                await self.beat()
+            except OSError as exc:  # can't write the file
+                log.warning("Could not write the heartbeat file: %s", exc)
+            await asyncio.sleep(self.settings.heartbeat_interval_seconds)
 
     async def run(self, listen_conn: asyncpg.Connection) -> None:
         """Run forever: drain the queue, then sleep until NOTIFY or the poll interval."""
@@ -140,12 +182,18 @@ class Worker:
             backlog := await self.queue.redo_backlog(max_attempts=self.settings.max_attempts)
         ):
             log.info("%d clip(s) to re-transcribe with %s.", backlog, self.queue.model)
-        while True:
-            self._wake.clear()
-            if reclaimed := await self.queue.reclaim_stale(stale):
-                log.info("Put %d stuck clip(s) back in the queue.", reclaimed)
-            await self.drain()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    self._wake.wait(), timeout=self.settings.poll_interval_seconds
-                )
+        heartbeat = asyncio.create_task(self.heartbeat())
+        try:
+            while True:
+                self._wake.clear()
+                self._last_progress = time.monotonic()
+                if reclaimed := await self.queue.reclaim_stale(stale):
+                    log.info("Put %d stuck clip(s) back in the queue.", reclaimed)
+                await self.drain()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._wake.wait(), timeout=self.settings.poll_interval_seconds
+                    )
+        finally:
+            heartbeat.cancel()
+            self._remove_heartbeat()  # a stopped worker isn't healthy

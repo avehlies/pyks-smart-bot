@@ -20,8 +20,11 @@ log = logging.getLogger("yks_clip_worker")
 
 
 async def run(settings: WorkerSettings) -> None:
-    pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=3)
-    listen_conn = await asyncpg.connect(settings.database_url)
+    # command_timeout: a query that hangs (e.g. a dropped connection) raises instead of stalling.
+    pool = await asyncpg.create_pool(
+        settings.database_url, min_size=1, max_size=3, command_timeout=60
+    )
+    listen_conn = await asyncpg.connect(settings.database_url, command_timeout=60)
     discord = DiscordAPI(settings.auth_token)
     http = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True)
     transcriber = ProcessTranscriber.whisper(
@@ -30,6 +33,7 @@ async def run(settings: WorkerSettings) -> None:
         compute_type=settings.whisper_compute_type,
         beam_size=settings.whisper_beam_size,
         idle_seconds=settings.whisper_idle_unload_seconds,
+        timeout_seconds=settings.transcribe_timeout_seconds,
     )
     worker = Worker(
         queue=ClipQueue(pool, model=settings.whisper_model),

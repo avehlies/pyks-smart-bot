@@ -296,7 +296,7 @@ docker compose up -d
 docker compose ps
 ```
 
-After about a minute, `bot` should show **healthy** and `clip-worker` should be **running**.
+After about a minute, `bot` and `clip-worker` should both show **healthy**.
 
 ### 4.8 Read the startup logs
 
@@ -389,7 +389,7 @@ docker compose exec postgres psql -U yks -d yks -c "UPDATE clips SET status='pen
 ### 5.2 Watch the first day
 
 ```sh
-docker compose ps        # all running; bot "healthy"
+docker compose ps        # all running; bot and clip-worker "healthy"
 docker stats --no-stream # memory per container
 docker compose logs --since 1h bot | grep -E "ERROR|WARNING"
 ```
@@ -462,6 +462,7 @@ Anything that happened while the new bot was running isn't in MongoDB: new `!bes
 | `migrate` fails | Read `docker compose logs migrate`. It's usually the same password problem, or Postgres not being healthy yet; run `docker compose up -d migrate` again. |
 | `bind: address already in use` on port 3000 | Something else (often the old bot) is using `PORT`. Stop it, or set a different `PORT` in `.env`. |
 | `bot` shows `unhealthy` | `docker compose logs bot`. The HTTP API didn't start, or the process is stuck. `curl localhost:$PORT/healthz` on the server shows whether it's reachable. |
+| `clip-worker` shows `unhealthy` | `docker compose exec clip-worker yks-clip-worker-health` says why. `docker compose logs clip-worker` shows a warning: the database check failed, or no progress for too long (a clip stuck past `TRANSCRIBE_TIMEOUT_SECONDS`). Restart it with `docker compose restart clip-worker`. |
 | Import: `ServerSelectionTimeoutError` | The server can't reach MongoDB: check the Atlas IP access list (2.5), the host name, and the `mongodb+srv://` vs `mongodb://` form. |
 | Import: `Authentication failed` | Wrong user or password in `MONGO_URL`, a special character not percent-encoded, or `authSource=admin` missing for self-hosted. |
 | Import: `pymongo is needed` | You ran `yks-import-mongo` without `--with "pymongo>=4.10"`. Use the exact command from 3.3. |

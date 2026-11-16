@@ -9,7 +9,7 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import pytest
-from yks_clip_worker.transcriber import BackendSpec, ProcessTranscriber
+from yks_clip_worker.transcriber import BackendSpec, ProcessTranscriber, TranscribeTimeout
 
 SPEC = BackendSpec(factory="fake_backend:BigModel", kwargs=(("label", "test"),))
 
@@ -106,10 +106,32 @@ async def test_close_stops_a_long_transcription_quickly() -> None:
         await job
 
 
+async def test_a_clip_over_the_timeout_kills_the_child() -> None:
+    transcriber = ProcessTranscriber(SPEC, idle_seconds=60, timeout_seconds=5)
+    try:
+        pid = child_pid(await transcriber.transcribe(Path("warm-up.mp4")))
+        started = time.monotonic()
+        with pytest.raises(TranscribeTimeout):
+            await transcriber.transcribe(Path("slow"))  # sleeps 30 s
+        assert time.monotonic() - started < 10
+        assert not transcriber.loaded
+        await wait_until(lambda: not alive(pid))
+        # The next clip gets a new child.
+        assert child_pid(await transcriber.transcribe(Path("ok.mp4"))) != pid
+    finally:
+        await transcriber.aclose()
+
+
 async def test_whisper_factory_builds_the_spec() -> None:
     transcriber = ProcessTranscriber.whisper(
-        "base.en", device="cpu", compute_type="int8", beam_size=3, idle_seconds=120
+        "base.en",
+        device="cpu",
+        compute_type="int8",
+        beam_size=3,
+        idle_seconds=120,
+        timeout_seconds=900,
     )
+    assert transcriber._timeout == 900
     assert transcriber._spec.factory == "yks_clip_worker.transcriber:WhisperTranscriber"
     assert dict(transcriber._spec.kwargs) == {
         "model": "base.en",

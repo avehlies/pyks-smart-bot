@@ -15,6 +15,7 @@ import httpx
 import pytest
 from yks_clip_worker.config import WorkerSettings, asyncpg_dsn
 from yks_clip_worker.discord_api import DiscordAPI
+from yks_clip_worker.health import check
 from yks_clip_worker.media import link_expires_at, link_is_fresh
 from yks_clip_worker.queue import ClipQueue
 from yks_clip_worker.transcriber import WhisperTranscriber
@@ -111,11 +112,15 @@ def transcriber() -> FakeTranscriber:
 
 @pytest.fixture
 async def worker(
-    pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber
+    pool: asyncpg.Pool, fake_discord: FakeDiscord, transcriber: FakeTranscriber, tmp_path: Path
 ) -> AsyncIterator[Worker]:
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake_discord.handler))
     settings = WorkerSettings(
-        _env_file=None, auth_token="test-token", max_attempts=3, whisper_model=MODEL
+        _env_file=None,
+        auth_token="test-token",
+        max_attempts=3,
+        whisper_model=MODEL,
+        heartbeat_file=str(tmp_path / "heartbeat"),
     )
     yield Worker(
         queue=ClipQueue(pool, model=MODEL),
@@ -500,6 +505,69 @@ async def test_stale_redo_claims_are_taken_again(pool: asyncpg.Pool) -> None:
     )
     job = await queue.claim_redo(max_attempts=3, stale_after=stale)
     assert (job.id, job.attempts, job.redo) == (clip_id, 2, True)
+
+
+# --- health -------------------------------------------------------------------------------------
+
+
+def heartbeat_exists(worker: Worker) -> bool:
+    return Path(worker.settings.heartbeat_file).exists()
+
+
+async def test_heartbeat_when_healthy(worker: Worker) -> None:
+    heartbeat = Path(worker.settings.heartbeat_file)
+    assert await worker.beat() is True
+    assert check(heartbeat, 120) is None
+
+
+async def test_no_heartbeat_when_stuck(worker: Worker) -> None:
+    limit = worker.settings.transcribe_timeout_seconds + worker.settings.stall_margin_seconds
+    worker._last_progress = time.monotonic() - limit - 1  # one clip has taken this long
+    assert worker.stalled()
+    assert await worker.beat() is False
+    assert not heartbeat_exists(worker)
+
+    worker.settings = worker.settings.model_copy(update={"transcribe_timeout_seconds": 0})
+    assert not worker.stalled()  # without a timeout, no way to tell
+
+
+async def test_no_heartbeat_without_the_database(
+    worker: Worker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def refused() -> None:
+        raise ConnectionRefusedError("database is down")
+
+    monkeypatch.setattr(worker.queue, "ping", refused)
+    assert await worker.beat() is False
+    assert not heartbeat_exists(worker)
+
+
+async def test_run_keeps_the_heartbeat_and_removes_it_on_exit(
+    worker: Worker, worker_dsn: str
+) -> None:
+    listen = await asyncpg.connect(worker_dsn)
+    task = asyncio.create_task(worker.run(listen))
+    try:
+        for _ in range(100):
+            if heartbeat_exists(worker):
+                break
+            await asyncio.sleep(0.05)
+        assert heartbeat_exists(worker)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await listen.close()
+    assert not heartbeat_exists(worker)
+
+
+def test_health_check(tmp_path: Path) -> None:
+    heartbeat = tmp_path / "heartbeat"
+    assert "no heartbeat file" in check(heartbeat, 120)
+    heartbeat.touch()
+    modified = heartbeat.stat().st_mtime
+    assert check(heartbeat, 120, now=modified + 60) is None
+    assert "last heartbeat 180s ago" in check(heartbeat, 120, now=modified + 180)
 
 
 # --- config and the Whisper wrapper -----------------------------------------------------------

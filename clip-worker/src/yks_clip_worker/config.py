@@ -32,6 +32,10 @@ class WorkerSettings(BaseSettings):
     # Stop the transcription process (freeing the model's memory) after this many seconds with no
     # clips; the next clip starts it again. 0 keeps the model loaded all the time.
     whisper_idle_unload_seconds: float = 300.0
+    # Kill the transcription process if one clip takes longer than this (a hung decoder would
+    # otherwise stall the queue for good); the clip counts as a failed attempt. It includes loading
+    # the model, and downloading it the first time. 0 waits forever.
+    transcribe_timeout_seconds: float = 1800.0
 
     # When no new clips are waiting, transcribe clips made with a different WHISPER_MODEL again,
     # newest first. They stay searchable by their old transcript until the new one is saved.
@@ -43,6 +47,16 @@ class WorkerSettings(BaseSettings):
     # A clip stuck in `processing` this long (e.g. the worker was killed) goes back to `pending`.
     stale_after_minutes: float = 30.0
     max_download_mb: int = 500
+
+    # Liveness for the Docker healthcheck (`yks-clip-worker-health`): every interval the worker
+    # touches this file, if the database answers and the queue isn't stuck. The check fails when
+    # the file is older than HEARTBEAT_MAX_AGE_SECONDS.
+    heartbeat_file: str = "/tmp/yks-clip-worker.heartbeat"
+    heartbeat_interval_seconds: float = 30.0
+    heartbeat_max_age_seconds: float = 120.0
+    # The queue counts as stuck when one clip has taken this long beyond TRANSCRIBE_TIMEOUT_SECONDS
+    # (the rest is for refreshing the link and downloading).
+    stall_margin_seconds: float = 1800.0
 
     log_level: str = "INFO"
 

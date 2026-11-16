@@ -32,11 +32,24 @@ Set `WHISPER_IDLE_UNLOAD_SECONDS=0` to keep the model loaded all the time (faste
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` on a GPU. |
 | `WHISPER_BEAM_SIZE` | `3` | Lower is faster on a CPU (`1` is greedy decoding), higher is slightly more accurate (`5` is faster-whisper's usual default). |
 | `WHISPER_IDLE_UNLOAD_SECONDS` | `300` | Stop the model's process after this long with no clips. `0` keeps it loaded. |
+| `TRANSCRIBE_TIMEOUT_SECONDS` | `1800` | Kill the model's process if one clip takes longer (including loading, or first downloading, the model); the clip counts as a failed attempt. `0` waits forever. |
 | `RETRANSCRIBE` | `true` | When idle, redo clips transcribed with a different `WHISPER_MODEL`. |
 | `MAX_ATTEMPTS` | `3` | Also limits attempts to re-transcribe a clip. |
 | `POLL_INTERVAL_SECONDS` | `60` | |
 | `STALE_AFTER_MINUTES` | `30` | |
 | `MAX_DOWNLOAD_MB` | `500` | Bigger clips are marked `failed`. |
+| `HEARTBEAT_FILE` | `/tmp/yks-clip-worker.heartbeat` | See [Health](#health). |
+| `HEARTBEAT_INTERVAL_SECONDS` | `30` | |
+| `HEARTBEAT_MAX_AGE_SECONDS` | `120` | |
+| `STALL_MARGIN_SECONDS` | `1800` | Time allowed on top of `TRANSCRIBE_TIMEOUT_SECONDS` (refreshing the link, downloading) before the worker counts as stuck. |
+
+## Health
+
+The image has a Docker `HEALTHCHECK` (`yks-clip-worker-health`). Every `HEARTBEAT_INTERVAL_SECONDS` the worker touches `HEARTBEAT_FILE`, but only if the database answers and the worker isn't stuck, meaning it has spent more than `TRANSCRIBE_TIMEOUT_SECONDS` + `STALL_MARGIN_SECONDS` on one clip. The check fails once the file is older than `HEARTBEAT_MAX_AGE_SECONDS`, and the container shows `unhealthy`.
+
+Docker itself doesn't restart unhealthy containers. To have them restarted, run something like [autoheal](https://github.com/willfarrell/docker-autoheal) and give the `clip-worker` service its label (`autoheal: "true"`).
+
+Database queries time out after 60 seconds, so a dead connection makes the worker exit (and restart) rather than hang.
 
 ## Running
 
