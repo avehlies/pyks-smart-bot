@@ -42,6 +42,9 @@ from yks.db.state import LATEST_BONUS_TITLE, LATEST_EPISODE_NUMBER, LATEST_MAIN_
 log = logging.getLogger("yks.import")
 
 DISCORD_EPOCH_MS = 1420070400000
+# `transcribed_model` for transcripts made by the TS bot (@xenova/transformers Whisper). It isn't
+# a model the clip worker runs, so the worker re-transcribes these clips in the background.
+TS_BOT_MODEL = "yks-smart-bot"
 _ATTACHMENT_PATH = re.compile(r"/attachments/(\d+)/(\d+)/([^/?#]+)")
 _BOT_STATE_KEYS = {
     "latestMainEpTitle": LATEST_MAIN_TITLE,
@@ -201,6 +204,7 @@ def plan_clips(docs: Iterable[Mapping[str, Any]], config: ImportConfig, plan: Im
                 "url": url,
                 "deleted": bool(doc.get("deleted")),
                 "transcription": transcription if done else None,
+                "transcribed_model": TS_BOT_MODEL if done else None,
                 "status": ClipStatus.DONE if done else ClipStatus.PENDING,
             }
         )
@@ -247,6 +251,7 @@ async def apply_plan(session: AsyncSession, plan: ImportPlan) -> None:
             constraint="uq_clips_message_attachment",
             set_={
                 "transcription": stmt.excluded.transcription,
+                "transcribed_model": stmt.excluded.transcribed_model,
                 "status": stmt.excluded.status,
                 "deleted": Clip.deleted | stmt.excluded.deleted,
             },

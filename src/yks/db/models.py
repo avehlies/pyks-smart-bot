@@ -186,6 +186,9 @@ class Clip(Base):
     # Not before this time (backoff after a failed attempt). NULL = as soon as possible.
     retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     transcribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The Whisper model that wrote `transcription` (e.g. "small.en"). The worker re-transcribes
+    # `done` clips whose model differs from its own. NULL means unknown, and is left alone.
+    transcribed_model: Mapped[str | None] = mapped_column(Text)
 
     search: Mapped[str | None] = mapped_column(
         TSVECTOR,

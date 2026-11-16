@@ -148,8 +148,10 @@ def test_clips_are_parsed_from_their_urls() -> None:
         ClipStatus.DONE,
         "Oh no, they did another one.",
     )
+    assert first["transcribed_model"] == "yks-smart-bot"  # so the clip worker redoes it
     # Empty transcripts (failures in the TS bot) are queued again by default.
     assert clips[1118513877685117000]["status"] == ClipStatus.PENDING
+    assert clips[1118513877685117000]["transcribed_model"] is None
     assert clips[1118513877685118000]["deleted"] is True
     assert any("unrecognised URL" in w for w in plan.warnings)
 
