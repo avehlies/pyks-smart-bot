@@ -158,6 +158,37 @@ async def test_rss_channel_rejects_missing_and_voice(
     assert channel.sent[2].reply_to is not None
 
 
+async def test_rss_channel_refuses_a_channel_the_bot_cant_post_in(
+    bot: YKSBot, guild: FakeGuild, channel: FakeChannel, db: Database
+) -> None:
+    news = FakeChannel(guild=guild, name="news")
+    guild.me.guild_permissions = discord.Permissions(view_channel=True, send_messages=True)
+    await say(bot, channel, f"!rssChannel {news.mention}", FakeUser(guild_permissions=ADMIN))
+    assert [s.content for s in channel.sent] == [
+        f"I can't post episode announcements in {news.mention}: I need Embed Links there. "
+        "No change."
+    ]
+    assert news.sent == []
+    async with db.session() as session:
+        assert await guilds.get_rss_channel_id(session, guild.id) is None
+
+
+async def test_rss_channel_warns_when_reactions_wont_work(
+    bot: YKSBot, guild: FakeGuild, channel: FakeChannel, db: Database
+) -> None:
+    news = FakeChannel(guild=guild, name="news")
+    guild.me.guild_permissions = discord.Permissions(
+        view_channel=True, send_messages=True, embed_links=True, read_message_history=True
+    )
+    await say(bot, channel, f"!rssChannel {news.mention}", FakeUser(guild_permissions=ADMIN))
+    assert [s.content for s in news.sent] == [
+        f"RSS feed updates will come to {news.mention}. "
+        "(Without Add Reactions, they'll go out without reactions.)"
+    ]
+    async with db.session() as session:
+        assert await guilds.get_rss_channel_id(session, guild.id) == news.id
+
+
 async def test_rss_channel_needs_admin(bot: YKSBot, guild: FakeGuild, channel: FakeChannel) -> None:
     news = FakeChannel(guild=guild, name="news")
     await say(bot, channel, f"!rssChannel {news.mention}", FakeUser(guild_permissions=MODERATOR))

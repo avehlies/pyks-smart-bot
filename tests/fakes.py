@@ -146,6 +146,12 @@ class FakeGuild:
     members: list[FakeMember] = field(default_factory=list)
     system_channel: FakeChannel | None = None
     filesize_limit: int = 10 * 1024 * 1024
+    # The bot's own member; it can do anything unless a test says otherwise.
+    me: FakeUser = field(
+        default_factory=lambda: FakeUser(
+            id=BOT_USER_ID, bot=True, guild_permissions=discord.Permissions.all()
+        )
+    )
 
     def get_channel(self, channel_id: int) -> FakeChannel | None:
         return next((c for c in self.channels if c.id == channel_id), None)
