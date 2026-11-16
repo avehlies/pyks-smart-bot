@@ -584,8 +584,8 @@ def test_whisper_transcriber_joins_segments(
     calls: dict[str, object] = {}
 
     class FakeModel:
-        def __init__(self, name: str, *, device: str, compute_type: str) -> None:
-            calls["init"] = (name, device, compute_type)
+        def __init__(self, name: str, *, device: str, compute_type: str, cpu_threads: int) -> None:
+            calls["init"] = (name, device, compute_type, cpu_threads)
 
         def transcribe(self, path: str, **kwargs: object):
             calls["kwargs"] = kwargs
@@ -598,9 +598,9 @@ def test_whisper_transcriber_joins_segments(
         sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeModel)
     )
     monkeypatch.setattr("yks_clip_worker.transcriber.has_audio", lambda path: True)
-    transcriber = WhisperTranscriber("tiny.en", compute_type="int8")
+    transcriber = WhisperTranscriber("tiny.en", compute_type="int8", cpu_threads=2)
     assert transcriber.transcribe(tmp_path / "x.mp4") == "Oh no, they did another."
-    assert calls["init"] == ("tiny.en", "cpu", "int8")
+    assert calls["init"] == ("tiny.en", "cpu", "int8", 2)
     assert calls["kwargs"]["language"] == "en"
     assert calls["kwargs"]["vad_filter"] is True
     transcriber.transcribe(tmp_path / "y.mp4")  # model is loaded once

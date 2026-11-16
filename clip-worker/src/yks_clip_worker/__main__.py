@@ -32,6 +32,7 @@ async def run(settings: WorkerSettings) -> None:
         device=settings.whisper_device,
         compute_type=settings.whisper_compute_type,
         beam_size=settings.whisper_beam_size,
+        cpu_threads=settings.whisper_cpu_threads,
         idle_seconds=settings.whisper_idle_unload_seconds,
         timeout_seconds=settings.transcribe_timeout_seconds,
     )

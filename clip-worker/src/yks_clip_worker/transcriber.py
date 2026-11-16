@@ -53,12 +53,19 @@ class WhisperTranscriber:
     into the Hugging Face cache). Used inside the child process."""
 
     def __init__(
-        self, model: str, *, device: str = "cpu", compute_type: str = "int8", beam_size: int = 5
+        self,
+        model: str,
+        *,
+        device: str = "cpu",
+        compute_type: str = "int8",
+        beam_size: int = 5,
+        cpu_threads: int = 0,
     ) -> None:
         self._name = model
         self._device = device
         self._compute_type = compute_type
         self._beam_size = beam_size
+        self._cpu_threads = cpu_threads  # 0: faster-whisper's default (4)
         self._model: WhisperModel | None = None
         self._lock = threading.Lock()
 
@@ -69,13 +76,17 @@ class WhisperTranscriber:
 
                 started = time.monotonic()
                 self._model = WhisperModel(
-                    self._name, device=self._device, compute_type=self._compute_type
+                    self._name,
+                    device=self._device,
+                    compute_type=self._compute_type,
+                    cpu_threads=self._cpu_threads,
                 )
                 log.info(
-                    "Loaded Whisper model %s (%s, %s) in %.1fs",
+                    "Loaded Whisper model %s (%s, %s, %s CPU threads) in %.1fs",
                     self._name,
                     self._device,
                     self._compute_type,
+                    self._cpu_threads or "default",
                     time.monotonic() - started,
                 )
             return self._model
@@ -158,12 +169,14 @@ class ProcessTranscriber:
         beam_size: int,
         idle_seconds: float,
         timeout_seconds: float = 0.0,
+        cpu_threads: int = 0,
     ) -> ProcessTranscriber:
         kwargs = {
             "model": model,
             "device": device,
             "compute_type": compute_type,
             "beam_size": beam_size,
+            "cpu_threads": cpu_threads,
         }
         return cls(
             BackendSpec(kwargs=tuple(kwargs.items())),
