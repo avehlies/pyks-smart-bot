@@ -62,6 +62,24 @@ def resolve_channel(guild: discord.Guild, argument: str) -> Any | None:
     return next((c for c in guild.channels if c.name.lower() == name), None)
 
 
+# What the new-episode announcements need in the RSS channel, and what the reactions on them
+# need (adding a reaction to a message also needs its history).
+ANNOUNCE_PERMISSIONS = {
+    "view_channel": "View Channel",
+    "send_messages": "Send Messages",
+    "embed_links": "Embed Links",
+}
+REACTION_PERMISSIONS = {
+    "add_reactions": "Add Reactions",
+    "read_message_history": "Read Message History",
+}
+
+
+def missing_permissions(permissions: discord.Permissions, needed: dict[str, str]) -> list[str]:
+    """The names of the `needed` permissions that `permissions` lacks."""
+    return [label for flag, label in needed.items() if not getattr(permissions, flag)]
+
+
 def can_edit_rss_channel(ctx: commands.Context[Any]) -> bool:
     if ctx.guild is None:
         return False
@@ -134,9 +152,21 @@ class Welcome(commands.Cog):
         if getattr(target, "type", None) is not discord.ChannelType.text:
             await ctx.reply(f"{target.mention} is not a text channel. No change.")
             return
+        permissions = target.permissions_for(ctx.guild.me)
+        if missing := missing_permissions(permissions, ANNOUNCE_PERMISSIONS):
+            await ctx.reply(
+                f"I can't post episode announcements in {target.mention}: I need "
+                f"{', '.join(missing)} there. No change."
+            )
+            return
         async with self.bot.db.session() as session:
             await guilds.set_rss_channel(session, ctx.guild.id, target.id)
-        await target.send(f"RSS feed updates will come to {target.mention}.")
+        confirmation = f"RSS feed updates will come to {target.mention}."
+        if no_reactions := missing_permissions(permissions, REACTION_PERMISSIONS):
+            confirmation += (
+                f" (Without {', '.join(no_reactions)}, they'll go out without reactions.)"
+            )
+        await target.send(confirmation)
 
     # --- !newmember (owner only) ------------------------------------------------------------------
 

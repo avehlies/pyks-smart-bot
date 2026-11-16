@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import select
 
 from yks.bot.client import YKSBot
+from yks.bot.cogs.tallies import EMBED_LIMIT, FIELD_VALUE_LIMIT, TOP_N
 from yks.config import Settings
 from yks.db import Database, ReactionTally, TallyKind
 from yks.db.tallies import set_tally, top_tallies
@@ -162,7 +163,7 @@ async def test_topmail_ranks_skips_bot_posts_and_clips(
     assert embed.title == "__Top Mailbag Messages (Last 30 Days)__\n"
     assert [f.name for f in embed.fields] == ["1. From alice", "2. From bob"]
     assert embed.fields[0].value == f"[Jump to message]({short_letter.jump_url})\nLove the show"
-    assert len(embed.fields[1].value) == 1024
+    assert len(embed.fields[1].value) == FIELD_VALUE_LIMIT
     assert embed.fields[1].value.endswith("...")
 
 
@@ -186,6 +187,31 @@ async def test_topmail_limits_to_ten_and_last_30_days(
     await say(bot, general, "!bestmail", FakeUser())
     names = [f.name for f in general.embeds[0].fields]
     assert names == [f"{n}. From u{11 - (n - 1)}" for n in range(1, 11)]
+
+
+async def test_topmail_of_long_letters_fits_in_one_embed(
+    bot: YKSBot, mailbag: FakeChannel, general: FakeChannel
+) -> None:
+    for i in range(TOP_N):
+        letter = mailbag.post("y" * 4000, author=FakeUser(name=f"{'n' * 32}{i}"))
+        await cog(bot).refresh_tally(react(letter, i + 1))
+    await say(bot, general, "!topmail", FakeUser())
+    (embed,) = general.embeds
+    assert len(embed.fields) == TOP_N
+    assert len(embed) <= EMBED_LIMIT  # Discord rejects bigger embeds outright
+
+
+async def test_topks_of_long_kickstarters_fits_in_one_embed(
+    bot: YKSBot, ks_channel: FakeChannel, general: FakeChannel
+) -> None:
+    for i in range(TOP_N):
+        post = kickstarter_post(ks_channel, f"{'Smart ' * 50}{i}")
+        post.embeds[0].description = "z" * 4000
+        await cog(bot).refresh_tally(react(post, i + 1))
+    await say(bot, general, "!topks", FakeUser())
+    (embed,) = general.embeds
+    assert len(embed.fields) == TOP_N
+    assert len(embed) <= EMBED_LIMIT
 
 
 async def test_topmail_empty(bot: YKSBot, general: FakeChannel) -> None:
