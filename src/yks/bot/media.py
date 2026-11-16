@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import time
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -23,8 +24,33 @@ def upload_limit(guild: discord.Guild | None) -> int:
     return getattr(guild, "filesize_limit", None) or DEFAULT_UPLOAD_LIMIT
 
 
+# Types Python only knows from the system's /etc/mime.types, which slim Docker images (like the
+# bot's) don't have. Without these, an `.ogg` posted with no content type isn't seen as a clip.
+_MEDIA_TYPES = {
+    ".aac": "audio/aac",
+    ".caf": "audio/x-caf",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".m4v": "video/x-m4v",
+    ".mka": "audio/x-matroska",
+    ".mkv": "video/x-matroska",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".ogv": "video/ogg",
+    ".opus": "audio/opus",
+    ".wma": "audio/x-ms-wma",
+    ".wmv": "video/x-ms-wmv",
+}
+
+
+def guess_media_type(filename: str) -> str | None:
+    """The MIME type for a file name, also for common audio/video types missing from slim images."""
+    suffix = PurePosixPath(filename).suffix.lower()
+    return mimetypes.guess_type(filename)[0] or _MEDIA_TYPES.get(suffix)
+
+
 def is_audio_or_video(content_type: str | None, filename: str) -> bool:
-    kind = content_type or mimetypes.guess_type(filename)[0] or ""
+    kind = content_type or guess_media_type(filename) or ""
     return kind.split("/")[0] in ("audio", "video")
 
 

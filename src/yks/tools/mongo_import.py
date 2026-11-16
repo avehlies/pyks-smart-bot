@@ -14,7 +14,6 @@ import argparse
 import asyncio
 import json
 import logging
-import mimetypes
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -25,6 +24,7 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yks.bot.media import guess_media_type
 from yks.config import Settings, get_settings
 from yks.db import (
     BestEpisodeVote,
@@ -200,7 +200,7 @@ def plan_clips(docs: Iterable[Mapping[str, Any]], config: ImportConfig, plan: Im
                 "message_id": message_id,
                 "attachment_id": attachment_id,
                 "filename": filename,
-                "content_type": mimetypes.guess_type(filename)[0],
+                "content_type": guess_media_type(filename),
                 "url": url,
                 "deleted": bool(doc.get("deleted")),
                 "transcription": transcription if done else None,

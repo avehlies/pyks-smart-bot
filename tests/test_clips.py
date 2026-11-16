@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from yks.bot.client import YKSBot
+from yks.bot.media import guess_media_type, is_audio_or_video
 from yks.config import Settings
 from yks.db import Clip, ClipStatus, Database
 
@@ -232,3 +233,22 @@ async def test_backfill_command_is_owner_only(
         "Backfilling clips from the clip channel history...",
         "Clip backfill done: 1 new clip(s).",
     ]
+
+
+@pytest.mark.parametrize(
+    ("filename", "kind"),
+    [
+        ("a.OGG", "audio/ogg"),
+        ("a.m4a", "audio/mp4"),
+        ("a.flac", "audio/flac"),
+        ("a.mkv", "video/x-matroska"),
+        ("a.txt", None),
+    ],
+)
+def test_media_types_without_the_systems_mime_types(
+    monkeypatch: pytest.MonkeyPatch, filename: str, kind: str | None
+) -> None:
+    # Slim Docker images (like the bot's) have no /etc/mime.types, so Python can't guess these.
+    monkeypatch.setattr("mimetypes.guess_type", lambda *args, **kwargs: (None, None))
+    assert guess_media_type(filename) == kind
+    assert is_audio_or_video(None, filename) is (kind is not None)
