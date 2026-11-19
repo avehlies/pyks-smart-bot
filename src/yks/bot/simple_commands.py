@@ -251,6 +251,7 @@ SIMPLE_COMMANDS: tuple[SimpleCommand, ...] = (
                 for name in (
                     "8chbein.jpg",
                     "adhd_md.jpg",
+                    "gta6.png",
                     "heycraisins.jpg",
                     "jf.jpg",
                     "jf-nyc.jpg",
