@@ -11,7 +11,6 @@ import asyncpg
 import httpx
 
 from yks_short_worker.config import WorkerSettings, get_settings
-from yks_short_worker.discord_api import DiscordAPI
 from yks_short_worker.store import ShortStore
 from yks_short_worker.worker import Worker
 from yks_short_worker.youtube import YouTube
@@ -25,13 +24,11 @@ async def run(settings: WorkerSettings) -> None:
         settings.database_url, min_size=1, max_size=2, command_timeout=60
     )
     http = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-    discord = DiscordAPI(settings.auth_token)
     worker = Worker(
         store=ShortStore(pool),
         youtube=YouTube(
             http, handle=settings.youtube_handle, channel_id=settings.youtube_channel_id
         ),
-        discord=discord,
         settings=settings,
     )
     task = asyncio.create_task(worker.run())
@@ -44,7 +41,6 @@ async def run(settings: WorkerSettings) -> None:
     except asyncio.CancelledError:
         log.info("Shutting down.")
     finally:
-        await discord.aclose()
         await http.aclose()
         await pool.close()
 
@@ -57,8 +53,6 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    if not settings.auth_token:
-        raise SystemExit("AUTH_TOKEN is not set (needed to post new shorts as the bot).")
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(run(settings))
 

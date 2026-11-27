@@ -46,8 +46,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD ["yks-clip-worker-health"]
 CMD ["yks-clip-worker"]
 
-# The YouTube Shorts worker: finds new shorts, records them, posts them in Discord. Small: asyncpg,
-# httpx and pydantic-settings only.
+# The YouTube Shorts worker: finds shorts and records them (the bot posts them; this image has no
+# Discord code). Small: asyncpg, httpx and pydantic-settings only.
 FROM runtime-base AS short-worker
 RUN useradd --create-home --uid 1000 worker
 COPY pyproject.toml uv.lock README.md ./

@@ -9,7 +9,7 @@ cp .env.example .env   # then fill in AUTH_TOKEN and the IDs
 docker compose up --build
 ```
 
-This starts Postgres, applies migrations (`migrate` service), the bot, the **clip worker** and the **short worker**. The clip worker is a separate application that transcribes clips for `/findtheclimp`; see [clip-worker/README.md](clip-worker/README.md). The first time the worker starts, it downloads its speech model (about 75 MB for `tiny.en`) into the `whisper-models` volume. The short worker (the `pyks_short_worker` service) watches the show's YouTube Shorts, records them for `!short` and posts new ones in `YKS_SHORTS_CHANNEL_ID`; see [short-worker/README.md](short-worker/README.md).
+This starts Postgres, applies migrations (`migrate` service), the bot, the **clip worker** and the **short worker**. The clip worker is a separate application that transcribes clips for `/findtheclimp`; see [clip-worker/README.md](clip-worker/README.md). The first time the worker starts, it downloads its speech model (about 75 MB for `tiny.en`) into the `whisper-models` volume. The short worker (the `pyks_short_worker` service) watches the show's YouTube Shorts and records them; the bot posts new ones in `YKS_SHORTS_CHANNEL_ID` and serves `!short`. See [short-worker/README.md](short-worker/README.md).
 
 After the first deploy (and whenever slash commands change), send `!sync` as the bot owner to register `/findtheclimp`. Global registration can take a while to appear; `!sync here` registers it in the current server instantly.
 

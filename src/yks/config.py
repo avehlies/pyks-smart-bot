@@ -56,7 +56,8 @@ class Settings(BaseSettings):
     yks_kickstarter_bot_channel_id: OptionalId = None
     # Channel where recipe-interceptor rewrites recipe links.
     yks_food_channel_id: OptionalId = None
-    # Where the short-worker posts new YouTube Shorts, and the only channel `!short` answers in.
+    # Where the bot posts new YouTube Shorts (found by the short-worker), and the only channel
+    # `!short` answers in.
     yks_shorts_channel_id: OptionalId = None
 
     # Podcast feeds
