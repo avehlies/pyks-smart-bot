@@ -56,6 +56,6 @@ async def _clean_tables(request: pytest.FixtureRequest) -> AsyncIterator[None]:
         await session.execute(
             text(
                 "TRUNCATE guild_settings, welcomed_members, bot_state, best_episode_votes, "
-                "reaction_tallies, clips RESTART IDENTITY"
+                "reaction_tallies, clips, youtube_shorts RESTART IDENTITY"
             )
         )

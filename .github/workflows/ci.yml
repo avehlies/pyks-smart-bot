@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-      - name: Install dependencies (bot and clip worker)
+      - name: Install dependencies (bot and workers)
         run: uv sync --locked --all-packages
       - name: Apply migrations
         run: uv run alembic upgrade head
@@ -81,10 +81,13 @@ jobs:
         include:
           - image: bot
             other: clip-worker
-            check: python -c "import yks.bot.client, pathlib; import importlib.util as u; assert u.find_spec('yks_clip_worker') is None and u.find_spec('faster_whisper') is None and not pathlib.Path('/app/clip-worker/src').exists()"
+            check: python -c "import yks.bot.client, pathlib; import importlib.util as u; assert u.find_spec('yks_clip_worker') is None and u.find_spec('yks_short_worker') is None and u.find_spec('faster_whisper') is None and not pathlib.Path('/app/clip-worker/src').exists() and not pathlib.Path('/app/short-worker/src').exists()"
           - image: clip-worker
             other: bot
-            check: python -c "import yks_clip_worker.worker, faster_whisper; import importlib.util as u; assert u.find_spec('discord') is None and u.find_spec('yks') is None"
+            check: python -c "import yks_clip_worker.worker, faster_whisper; import importlib.util as u; assert u.find_spec('discord') is None and u.find_spec('yks') is None and u.find_spec('yks_short_worker') is None"
+          - image: short-worker
+            other: bot
+            check: python -c "import yks_short_worker.worker; import importlib.util as u; assert u.find_spec('discord') is None and u.find_spec('yks') is None and u.find_spec('yks_clip_worker') is None and u.find_spec('faster_whisper') is None"
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
