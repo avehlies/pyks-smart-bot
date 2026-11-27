@@ -73,8 +73,8 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # Sidecar: finds new YouTube Shorts, records them for !short and posts them in
-  # YKS_SHORTS_CHANNEL_ID (separate image, no bot code; the bot never talks to YouTube).
+  # Sidecar: finds YouTube Shorts and records them; the bot posts new ones in YKS_SHORTS_CHANNEL_ID
+  # and serves !short (separate image, no bot code; it never talks to Discord, nor the bot to YouTube).
   pyks_short_worker:
     image: yks-short-worker:local
     build:

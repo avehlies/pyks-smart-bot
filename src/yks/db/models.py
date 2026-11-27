@@ -202,8 +202,9 @@ class Clip(Base):
 class YouTubeShort(Base):
     """One row per YouTube Short on the show's channel.
 
-    The separate short-worker application finds shorts and fills this table (with SQL); it posts
-    each new one in the shorts channel and sets `announced_at`. The bot only reads it (`!short`).
+    The separate short-worker application finds shorts and fills this table (with SQL), and marks
+    the ones never to be posted. The bot posts the rest in the shorts channel (claiming each by
+    setting `announced_at` first) and picks from the table for `!short`.
     """
 
     __tablename__ = "youtube_shorts"
@@ -213,8 +214,9 @@ class YouTubeShort(Base):
     # From the channel's RSS feed; NULL for shorts only seen on the channel's Shorts page.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = _now_column()
-    # Set once the short has been dealt with: posted (`announced_message_id` is the message), or
-    # skipped (found on the first scan, or already old when found).
+    # Set once the short has been dealt with: claimed by the bot to post (`announced_message_id` is
+    # the message, once posted), or marked by the worker as never to be posted (found on the first
+    # scan, too old, never dated).
     announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     announced_message_id: Mapped[int | None] = mapped_column(BigInteger)
 

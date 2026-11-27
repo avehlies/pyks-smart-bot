@@ -1,7 +1,7 @@
 [project]
 name = "yks-short-worker"
 version = "0.1.0"
-description = "Finds new YKS YouTube Shorts and posts them in Discord; a sidecar to the YKS Smart Bot"
+description = "Records the YKS YouTube Shorts for the YKS Smart Bot to post; a sidecar to the bot"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

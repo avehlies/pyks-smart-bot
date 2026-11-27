@@ -1,8 +1,7 @@
-"""A fake YouTube (the RSS feed and the Shorts page) and a fake Discord, as httpx transports."""
+"""A fake YouTube (the RSS feed and the Shorts page), as an httpx transport."""
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -46,25 +45,3 @@ class FakeYouTube:
 
     def client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
-
-
-class FakeDiscord:
-    def __init__(self) -> None:
-        self.posted: list[tuple[int, dict]] = []  # (channel id, body)
-        self.status = 200
-        self._next_id = 9000
-
-    def handle(self, request: httpx.Request) -> httpx.Response:
-        if self.status != 200:
-            return httpx.Response(self.status, json={"code": 50001, "message": "Missing Access"})
-        channel_id = int(request.url.path.split("/")[-2])
-        self.posted.append((channel_id, json.loads(request.content)))
-        self._next_id += 1
-        return httpx.Response(200, json={"id": str(self._next_id)})
-
-    def client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
-
-    @property
-    def contents(self) -> list[str]:
-        return [body["content"] for _, body in self.posted]
