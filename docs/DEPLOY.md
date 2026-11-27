@@ -349,7 +349,7 @@ Use a member account that isn't the owner; the owner skips cooldowns, which can 
 | `!topmail` | Top mailbag messages from the last 30 days, or the "No mailbag messages…" line |
 | `!topks` | Top kickstarters, if there are any |
 | `!climp` | A random clip from the clip channel |
-| `!short` in `#yks-shit` | A random YKS YouTube Short link (Discord shows its preview). In any other channel, no reply. |
+| `!short` in `#yks-shit` | A reply to you with a random YKS YouTube Short link (Discord shows its preview). In any other channel, no reply. |
 | `/findtheclimp` + a word from a known clip | Suggestions appear; picking one shows a private preview with **Post it** / **Don't post it** |
 | Join a voice channel, `!listen play 1` | `Downloading episode...`, then the bot joins and a **Now playing** embed with ⏸ ⏹ ▶️ appears. Try ⏸, then ▶️, then `!listen stop`. |
 | `!newmember <your user ID>` (as the owner) | Usually nothing: you've already been welcomed, and each member is only welcomed once per server. To see the welcome image, use the ID of a member who joined after the switch-over, or run it on a test server. |

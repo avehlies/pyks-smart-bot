@@ -35,7 +35,7 @@ class Shorts(commands.Cog):
     async def short(self, ctx: commands.Context[Any]) -> None:
         async with self.bot.db.session() as session:
             picked = await random_short(session)
-        await ctx.send(picked.url if picked else NO_SHORTS)
+        await ctx.reply(picked.url if picked else NO_SHORTS)
 
 
 async def setup(bot: YKSBot) -> None:
