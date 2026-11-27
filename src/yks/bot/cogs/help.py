@@ -36,7 +36,7 @@ HELP_COMMANDS = (
 )
 
 
-def other_commands(clip_channel: str) -> tuple[tuple[str, str], ...]:
+def other_commands(clip_channel: str, shorts_channel: str) -> tuple[tuple[str, str], ...]:
     return (
         (
             "`!latest <feed>`",
@@ -50,6 +50,7 @@ def other_commands(clip_channel: str) -> tuple[tuple[str, str], ...]:
             "later.\n_It goes by the episode number listed in the title_.",
         ),
         ("`!clip` / `!climp`", f"Grab a random clip that has been posted in {clip_channel}."),
+        ("`!short`", f"Grab a random YKS YouTube Short (in {shorts_channel})."),
         (
             "`!topmail`",
             "List the top messages posted in the mailbag channel within the last 30 days.",
@@ -57,12 +58,15 @@ def other_commands(clip_channel: str) -> tuple[tuple[str, str], ...]:
     )
 
 
-def build_help_embed(category: str, *, clip_channel_id: int | None) -> discord.Embed:
+def build_help_embed(
+    category: str, *, clip_channel_id: int | None, shorts_channel_id: int | None = None
+) -> discord.Embed:
     clip_channel = f"<#{clip_channel_id}>" if clip_channel_id else "the clip channel"
+    shorts_channel = f"<#{shorts_channel_id}>" if shorts_channel_id else "the shorts channel"
     fields = {
         "kickstarters": KICKSTARTER_COMMANDS,
         "listen": LISTEN_COMMANDS,
-        "other": other_commands(clip_channel),
+        "other": other_commands(clip_channel, shorts_channel),
     }.get(category.lower(), HELP_COMMANDS)
     embed = discord.Embed(color=GREEN)
     for name, value in fields:
@@ -78,7 +82,11 @@ class Help(commands.Cog):
     @commands.guild_only()
     @akairo_cooldown(MINUTE, rate=10)
     async def help(self, ctx: commands.Context[Any], category: str = "none") -> None:
-        embed = build_help_embed(category, clip_channel_id=self.bot.settings.yks_clip_channel_id)
+        embed = build_help_embed(
+            category,
+            clip_channel_id=self.bot.settings.yks_clip_channel_id,
+            shorts_channel_id=self.bot.settings.yks_shorts_channel_id,
+        )
         await ctx.send(embed=embed)
 
 

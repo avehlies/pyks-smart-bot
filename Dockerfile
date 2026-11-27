@@ -2,8 +2,9 @@
 # Both images, from one file. Build from the repository root:
 #   docker build --target bot .           (the default target, so plain `docker build .` works too)
 #   docker build --target clip-worker .
+#   docker build --target short-worker .
 # They share the base, uv and uv's download cache, but each venv holds only its own package and
-# dependencies: the bot image has no worker code or faster-whisper, the worker has no bot code or
+# dependencies: the bot image has no worker code or faster-whisper, the workers have no bot code or
 # discord.py.
 #
 # Each image syncs its venv in place. Building the venvs in a shared builder stage and copying them
@@ -30,6 +31,7 @@ RUN useradd --create-home --uid 1000 worker && mkdir -p /models && chown worker 
 # shared with the bot's build, so wheels are downloaded once and reused when the lockfile changes.
 COPY pyproject.toml uv.lock README.md ./
 COPY clip-worker/pyproject.toml clip-worker/README.md clip-worker/
+COPY short-worker/pyproject.toml short-worker/README.md short-worker/
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package yks-clip-worker --no-install-workspace
@@ -44,6 +46,27 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD ["yks-clip-worker-health"]
 CMD ["yks-clip-worker"]
 
+# The YouTube Shorts worker: finds new shorts, records them, posts them in Discord. Small: asyncpg,
+# httpx and pydantic-settings only.
+FROM runtime-base AS short-worker
+RUN useradd --create-home --uid 1000 worker
+COPY pyproject.toml uv.lock README.md ./
+COPY clip-worker/pyproject.toml clip-worker/README.md clip-worker/
+COPY short-worker/pyproject.toml short-worker/README.md short-worker/
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package yks-short-worker --no-install-workspace
+COPY short-worker/src short-worker/src
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package yks-short-worker
+USER worker
+# Fails when the worker's heartbeat file is stale (the database is unreachable). YouTube being
+# down doesn't make it unhealthy. See short-worker/README.md.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["yks-short-worker-health"]
+CMD ["yks-short-worker"]
+
 # The Discord bot. Keep this stage last: it's the default target.
 FROM runtime-base AS bot
 # ffmpeg: voice playback for !listen.
@@ -56,6 +79,7 @@ RUN useradd --create-home --uid 1000 yks
 # Dependencies first, as in the worker stage.
 COPY pyproject.toml uv.lock README.md ./
 COPY clip-worker/pyproject.toml clip-worker/README.md clip-worker/
+COPY short-worker/pyproject.toml short-worker/README.md short-worker/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package pyks-smart-bot --no-install-workspace
 COPY alembic.ini ./

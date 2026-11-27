@@ -10,6 +10,7 @@ from yks.db.models import (
     ReactionTally,
     TallyKind,
     WelcomedMember,
+    YouTubeShort,
 )
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "ReactionTally",
     "TallyKind",
     "WelcomedMember",
+    "YouTubeShort",
     "guilds",
 ]

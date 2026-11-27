@@ -16,6 +16,7 @@ All commands run on the server, from the repository folder, unless a step says o
 | `migrate` | Applies database migrations, then exits. Runs before the bot starts, every time. | — |
 | `bot` | The Discord bot, plus a `/healthz` endpoint on `PORT` for the Docker healthcheck. | 100–150 MB, +50 MB during `!listen` |
 | `clip-worker` | The separate transcription app. Its Whisper model loads only while there are clips to transcribe. | ~40–60 MB idle, ~200–350 MB while transcribing |
+| `pyks_short_worker` | The separate YouTube Shorts app: checks the channel's Shorts every 30 minutes, records them for `!short`, posts new ones. | ~40 MB |
 
 ---
 
@@ -98,6 +99,7 @@ Most values carry over from the TypeScript bot's environment under the **same na
 | `YKS_MAILBAG_CHANNEL_ID` | The mailbag channel's ID | `YKS_MAILBAG_CHANNEL_ID` (same) |
 | `YKS_KICKSTARTER_BOT_CHANNEL_ID` | The kickstarter-bot channel's ID | `YKS_KICKSTARTER_BOT_CHANNEL_ID` (same) |
 | `YKS_FOOD_CHANNEL_ID` | The food channel's ID (`682325132127371341`), where recipe links get a nyetcook.ing reply | (new) |
+| `YKS_SHORTS_CHANNEL_ID` | `#yks-shit` (`672146620275621918`): new YouTube Shorts are posted here, and `!short` only answers here. The bot needs **Send Messages** and **Embed Links** there. | (new) |
 | `MAIN_FEED_RSS` | Main podcast feed URL | `MAIN_FEED_RSS` (same) |
 | `BONUS_FEED_RSS` | Patreon feed URL | `BONUS_FEED_RSS` (same) |
 | `PORT` | Host port for the `/healthz` endpoint | `PORT` (same) |
@@ -296,13 +298,14 @@ docker compose up -d
 docker compose ps
 ```
 
-After about a minute, `bot` and `clip-worker` should both show **healthy**.
+After about a minute, `bot`, `clip-worker` and `pyks_short_worker` should all show **healthy**.
 
 ### 4.8 Read the startup logs
 
 ```sh
 docker compose logs --tail=50 bot
 docker compose logs --tail=50 clip-worker
+docker compose logs --tail=50 pyks_short_worker
 ```
 
 **The bot** should log, in order:
@@ -314,6 +317,8 @@ docker compose logs --tail=50 clip-worker
 If `MAIN_FEED_RSS` / `BONUS_FEED_RSS` are empty, it also logs a warning that the new-episode watcher is disabled.
 
 **The clip worker** should log `Clip worker ready; queue: {...}`, showing how many clips are in each status. If any are `pending`, it continues with `Starting the transcription process.` and `Loaded Whisper model tiny.en …`; the first time, loading includes downloading the model into the `whisper-models` volume. After that come `Transcribing clip …` and `Clip … done` lines. With an empty queue it just waits; that's normal.
+
+**The short worker** should log `Short worker ready; scanning @YourKickstarterSucks every 30 minutes, posting in channel 672146620275621918.`, then `Found 48 new short(s): …` on its first scan. **Nothing is posted on the first scan**: the shorts already on the channel are recorded quietly, and only ones uploaded after that are posted. A `Couldn't read the RSS feed` or `Couldn't read the Shorts page` warning means one of its two sources failed; it carries on with the other.
 
 ### 4.9 Register the slash command
 
@@ -344,6 +349,7 @@ Use a member account that isn't the owner; the owner skips cooldowns, which can 
 | `!topmail` | Top mailbag messages from the last 30 days, or the "No mailbag messages…" line |
 | `!topks` | Top kickstarters, if there are any |
 | `!climp` | A random clip from the clip channel |
+| `!short` in `#yks-shit` | A random YKS YouTube Short link (Discord shows its preview). In any other channel, no reply. |
 | `/findtheclimp` + a word from a known clip | Suggestions appear; picking one shows a private preview with **Post it** / **Don't post it** |
 | Join a voice channel, `!listen play 1` | `Downloading episode...`, then the bot joins and a **Now playing** embed with ⏸ ⏹ ▶️ appears. Try ⏸, then ▶️, then `!listen stop`. |
 | `!newmember <your user ID>` (as the owner) | Usually nothing: you've already been welcomed, and each member is only welcomed once per server. To see the welcome image, use the ID of a member who joined after the switch-over, or run it on a test server. |
@@ -389,7 +395,7 @@ docker compose exec postgres psql -U yks -d yks -c "UPDATE clips SET status='pen
 ### 5.2 Watch the first day
 
 ```sh
-docker compose ps        # all running; bot and clip-worker "healthy"
+docker compose ps        # all running; bot, clip-worker and pyks_short_worker "healthy"
 docker stats --no-stream # memory per container
 docker compose logs --since 1h bot | grep -E "ERROR|WARNING"
 ```
@@ -407,7 +413,7 @@ Back up Postgres daily. For example, add this to the server's crontab (`crontab 
 Create the `backups` folder first (`mkdir backups`). To restore a backup, with the bot and worker stopped:
 
 ```sh
-docker compose stop bot clip-worker
+docker compose stop bot clip-worker pyks_short_worker
 docker compose exec -T postgres pg_restore -U yks -d yks --clean --if-exists < backups/yks-YYYY-MM-DD.dump
 docker compose up -d
 ```
@@ -440,7 +446,7 @@ Once you're happy, after a week or so:
 MongoDB is never modified by any of this, so going back to the TypeScript bot is just:
 
 ```sh
-docker compose stop bot clip-worker
+docker compose stop bot clip-worker pyks_short_worker
 ```
 
 Then start the TypeScript bot again (reverse step 4.4).
@@ -463,6 +469,8 @@ Anything that happened while the new bot was running isn't in MongoDB: new `!bes
 | `bind: address already in use` on port 3000 | Something else (often the old bot) is using `PORT`. Stop it, or set a different `PORT` in `.env`. |
 | `bot` shows `unhealthy` | `docker compose logs bot`. The HTTP API didn't start, the process is stuck, or the bot has been disconnected from Discord for over 2 minutes (`/healthz` answers 503 with `"discord": false`). `curl localhost:$PORT/healthz` on the server shows which. |
 | `clip-worker` shows `unhealthy` | `docker compose exec clip-worker yks-clip-worker-health` says why. `docker compose logs clip-worker` shows a warning: the database check failed, or no progress for too long (a clip stuck past `TRANSCRIBE_TIMEOUT_SECONDS`). Restart it with `docker compose restart clip-worker`. |
+| `pyks_short_worker` shows `unhealthy` | It can't reach the database: `docker compose logs pyks_short_worker`. (YouTube being down doesn't make it unhealthy.) |
+| New shorts aren't posted | `docker compose logs pyks_short_worker`: `Couldn't post short …` means a Discord problem (often missing **Send Messages** in `YKS_SHORTS_CHANNEL_ID`); it retries every scan. If both YouTube sources fail, YouTube may have changed its pages: see [short-worker/README.md](../short-worker/README.md). |
 | Import: `ServerSelectionTimeoutError` | The server can't reach MongoDB: check the Atlas IP access list (2.5), the host name, and the `mongodb+srv://` vs `mongodb://` form. |
 | Import: `Authentication failed` | Wrong user or password in `MONGO_URL`, a special character not percent-encoded, or `authSource=admin` missing for self-hosted. |
 | Import: `pymongo is needed` | You ran `yks-import-mongo` without `--with "pymongo>=4.10"`. Use the exact command from 3.3. |

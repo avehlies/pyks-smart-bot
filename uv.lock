@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "pyks-smart-bot",
     "yks-clip-worker",
+    "yks-short-worker",
 ]
 
 [[package]]
@@ -2290,6 +2291,23 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "av", specifier = "<19" },
     { name = "faster-whisper", specifier = ">=1.2" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic-settings", specifier = ">=2.16" },
+]
+
+[[package]]
+name = "yks-short-worker"
+version = "0.1.0"
+source = { editable = "short-worker" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "httpx" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic-settings", specifier = ">=2.16" },
 ]

@@ -197,3 +197,27 @@ class Clip(Base):
 
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now_column()
+
+
+class YouTubeShort(Base):
+    """One row per YouTube Short on the show's channel.
+
+    The separate short-worker application finds shorts and fills this table (with SQL); it posts
+    each new one in the shorts channel and sets `announced_at`. The bot only reads it (`!short`).
+    """
+
+    __tablename__ = "youtube_shorts"
+
+    video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str | None] = mapped_column(Text)
+    # From the channel's RSS feed; NULL for shorts only seen on the channel's Shorts page.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_seen_at: Mapped[datetime] = _now_column()
+    # Set once the short has been dealt with: posted (`announced_message_id` is the message), or
+    # skipped (found on the first scan, or already old when found).
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    announced_message_id: Mapped[int | None] = mapped_column(BigInteger)
+
+    @property
+    def url(self) -> str:
+        return f"https://www.youtube.com/shorts/{self.video_id}"

@@ -28,6 +28,7 @@ EXTENSIONS: tuple[str, ...] = (
     "yks.bot.cogs.findtheclimp",
     "yks.bot.cogs.listen",
     "yks.bot.cogs.recipe_interceptor",
+    "yks.bot.cogs.shorts",
 )
 
 
