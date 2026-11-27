@@ -57,11 +57,13 @@ async def test_short_posts_a_random_short(
         "https://www.youtube.com/shorts/bbbbbbbbbbb",
     }
     assert len(shorts_channel.sent) == 10
+    assert all(s.reply_to is not None for s in shorts_channel.sent)  # replies to the asker
 
 
 async def test_short_with_no_shorts(bot: YKSBot, shorts_channel: FakeChannel) -> None:
     await say(bot, shorts_channel, "!short", FakeUser())
     assert [s.content for s in shorts_channel.sent] == [NO_SHORTS]
+    assert shorts_channel.sent[0].reply_to is not None
 
 
 async def test_short_is_ignored_in_other_channels(
